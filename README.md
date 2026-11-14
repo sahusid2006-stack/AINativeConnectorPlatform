@@ -2,7 +2,7 @@
 
 AI Native Connector Platform — simulator-first, evidence-driven connector generation
 and maintenance. Current slices implement WO-1 setup, WO-2 durable foundations,
-WO-5 independent GitHub fixtures/verification scaffolding, and WO-3 owner security.
+WO-5 independent GitHub fixtures/verification scaffolding, WO-3 owner security, and WO-4 bounded source intake.
 
 ## Implemented
 
@@ -24,7 +24,7 @@ WO-5 independent GitHub fixtures/verification scaffolding, and WO-3 owner securi
 - Fixed public schemas/acceptance cases and a credential-free, network-isolated
   boundary probe harness. Hash-locked dependency scanning fails closed.
 
-**Not implemented:** owner-login UI, source ingestion, executable
+**Not implemented:** owner-login UI, executable
 connector mappings, model generation, actual job orchestration, publication API,
 MCP, workflows, or drift repair. Database job primitives are not a working build
 pipeline. Fixture tests do not establish generated-adapter acceptance. No live
@@ -109,6 +109,49 @@ errors without asking the generator to rewrite adapters. Policy denial precedes
 credential resolution/provider contact. Actual protocol calls integrate in WO-6.
 Live connections remain disabled until their later gates pass.
 
+## Retained documentation and selections
+
+Owner-only backend routes (login/Origin/CSRF above apply):
+
+- `POST /sources/upload`: raw UTF-8 document body with its Content-Type and optional
+  `X-Source-Name` header. This never reads a caller-specified host file path.
+- `POST /sources/fetch`: JSON `url` and explicitly owner-approved `approved_origins`
+  (scheme/host/port only). Each redirect is rechecked before contact. All resolved
+  addresses must be permitted; the transport connects to the checked IP, validates
+  its peer, and uses verified TLS/SNI without a second DNS lookup. No ambient proxy,
+  cookie, authorization header, or automatic document-link crawling is used.
+- `GET /sources/{source_id}`: retained origin/time/content digest and safe content.
+- `POST /sources/proposals`: up to ten unique retained intake `source_ids`.
+- `GET /sources/proposals/{proposal_id}`: immutable operations, schema/auth facts,
+  source quotes/JSON pointers, and specific unresolved input requests.
+- `POST /sources/proposals/{proposal_id}/selection`: immutable selected
+  `operation_ids`; unknown, contradictory, or unresolved selections fail closed.
+
+Limits: ten sources per proposal, 2 MiB per source/raw upload request, 100 operations,
+32 parser levels, bounded nodes/reference expansion, three redirects, and a shared
+15-second fetch deadline. DNS concurrency is bounded; HTTP responses are byte-limited
+and compressed responses are rejected rather than inflated. Metadata, loopback and
+private addresses are blocked, except RFC1918/ULA addresses for the exact app-owned
+`http://fixtures:8000` alias; known IPv6 metadata addresses remain denied there too.
+
+Deterministic extraction supports OpenAPI 3.0 JSON/YAML with bounded nonrecursive
+local references, inherited parameters, and explicit no-auth/Bearer/Basic/API-key
+facts. External/recursive references, ambiguous servers/authentication/responses,
+unsupported schemas/formats and missing facts remain unresolved. YAML aliases,
+custom executable tags, duplicate keys and excessive depth are rejected. HTML,
+Markdown and text propose declared HTTP operations without executing scripts or
+embedded instructions; absent structured schemas remain unresolved, not invented.
+OpenAPI 3.1/Swagger and SOAP-specific extraction remain unsupported/deferred.
+
+Configured/decrypted current credentials are registered for redaction in the trusted
+intake process, including after restart; obvious credential examples/provider token
+patterns are scrubbed too. Source content is sanitized **before** retention. Evidence
+stores the retained-content digest plus the original-content digest/redaction flag,
+not a plaintext credential-bearing original. All quotes refer to retained safe content.
+Proposal/selection metadata is immutable and verified through actual process/database
+restart. These tests establish the intake boundary, not model prompt-injection or
+executable-adapter acceptance; those remain later generation/runtime gates.
+
 ## Fixture ownership and security gates
 
 See [fixtures/README.md](fixtures/README.md) and [contracts/README.md](contracts/README.md).
@@ -156,7 +199,7 @@ slice. Incoming owner/MCP credentials remain separate from downstream credential
 - `tests/`: real PostgreSQL/process restart checks and provider/security probe tests.
 - `tools/`: trusted isolated-runner supervisor and hash-locked audit tooling.
 
-Next: bounded source intake (WO-4), deterministic
+Next: deterministic
 REST runtime (WO-6), genuine model-backed generation (WO-7), controlled publication
 (WO-8), and the build UI (WO-9). Later milestones add Slack/MCP, legacy workflows,
 and drift repair. Replay, simulator, and live evidence must stay clearly labeled.

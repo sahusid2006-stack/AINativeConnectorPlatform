@@ -10,6 +10,11 @@ from connector_studio.access import OwnerAccess
 from connector_studio.policy import ConnectionSecurity, Permit
 from connector_studio.provisioning import configured_secret
 from tests.security_support import POLICY
+from tests.test_sources import spec
+from connector_studio.source_control import retain, propose, choose
+from connector_studio import models as m
+import json
+import hashlib
 import os
 import uuid
 
@@ -32,13 +37,22 @@ if mode == "seed":
     session = access.login(configured_secret("OWNER_ACCESS_TOKEN"))
     nonce = os.urandom(12)
     encrypted = nonce+AESGCM(security._key()).encrypt(nonce,session["token"].encode(),b"restart-probe")
+    source = retain(store,"upload://restart","upload://restart","application/json",json.dumps(spec()).encode())
+    proposal = propose(store,[source])
+    selection = choose(store,proposal["proposal_id"],[proposal["operations"][0]["id"]])
     with engine.begin() as conn:
-        conn.exec_driver_sql("CREATE TABLE security_probe (connection_id uuid, encrypted_session bytea)")
-        conn.execute(text("INSERT INTO security_probe VALUES (:connection,:session)"),{"connection":connection,"session":encrypted})
+        conn.exec_driver_sql("CREATE TABLE security_probe (connection_id uuid, encrypted_session bytea, source_id uuid, proposal_id uuid, selection_id uuid)")
+        conn.execute(text("INSERT INTO security_probe VALUES (:connection,:session,:source,:proposal,:selection)"),{"connection":connection,"session":encrypted,"source":source,"proposal":proposal["proposal_id"],"selection":selection["selection_id"]})
 elif mode == "check":
     with engine.connect() as conn: row = conn.execute(text("SELECT * FROM security_probe")).mappings().one()
     encrypted = row["encrypted_session"]
     token = AESGCM(security._key()).decrypt(encrypted[:12],encrypted[12:],b"restart-probe").decode()
+    with engine.connect() as conn:
+        retained=conn.execute(select(m.sources).where(m.sources.c.id==row["source_id"])).mappings().one()
+        assert retained["digest"] == hashlib.sha256(retained["content"]).hexdigest()
+        assert conn.scalar(select(m.source_intake.c.original_digest).where(m.source_intake.c.source_id==row["source_id"])) == retained["digest"]
+        assert conn.scalar(select(m.source_proposals.c.document).where(m.source_proposals.c.id==row["proposal_id"]))["status"] == "ready_for_selection"
+        assert conn.scalar(select(m.source_selections.c.proposal_id).where(m.source_selections.c.id==row["selection_id"])) == row["proposal_id"]
     assert access.authenticate(token)["actor"] == "owner", "Retained owner session must remain valid"
     assert security.resolve(Permit(row["connection_id"],uuid.UUID(int=0),"probe",1,False)) == "synthetic-restart-provider-value", "Retained encrypted secret must decrypt with the same key"
 elif mode != "drop":

@@ -18,6 +18,7 @@ jobs:
       - run: make verify-auth
       - run: make verify-connections
       - run: make verify-policy
+      - run: make verify-source-intake
       - run: make verify-durability
       - run: make verify-fixtures
       - run: make verify-security

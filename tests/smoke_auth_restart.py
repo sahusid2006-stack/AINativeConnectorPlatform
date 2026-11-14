@@ -17,4 +17,4 @@ try:
     probe("check")
 finally:
     probe("drop")
-print("Persisted owner sessions and encrypted connection secrets survived actual process/database restart with provisioned keys; no secret values displayed.")
+print("Persisted owner sessions, encrypted connection secrets, source metadata/proposals/selections survived actual process/database restart with provisioned keys; no secret values displayed.")

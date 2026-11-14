@@ -1,5 +1,6 @@
 """Central redaction for credential-bearing trusted components."""
 import os
+import json
 from threading import RLock
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ def remember(value):
         with _lock:
             _values.add(value)
             _values.add(quote(value, safe=""))
+            _values.add(json.dumps(value, ensure_ascii=False)[1:-1])
 
 
 def redacted(value):
