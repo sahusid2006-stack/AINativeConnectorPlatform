@@ -9,7 +9,8 @@ import uuid
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from jsonschema import Draft202012Validator
+from jsonschema import ValidationError
+from .contracts import offline_validator
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, update
 
@@ -170,7 +171,13 @@ class ConnectionSecurity:
         contract = conn.scalar(select(m.operations.c.contract).where(m.operations.c.version_id == version_id, m.operations.c.name == operation))
         if not version or version["connector_id"] != connection["connector_id"] or version["status"] != "published" or not contract:
             raise AccessError("version_or_operation_denied")
-        Draft202012Validator(contract["input_schema"]).validate(arguments)
+        arguments_digest(arguments)
+        try:
+            offline_validator(contract["input_schema"]).validate(arguments)
+        except ValidationError:
+            raise
+        except Exception:
+            raise AccessError("invalid_contract", 422) from None
         return contract
 
     def approve(self, connection_id, version_id, operation, arguments, expires_seconds=600, actor="owner"):

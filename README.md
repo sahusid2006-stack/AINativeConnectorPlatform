@@ -2,7 +2,7 @@
 
 AI Native Connector Platform — simulator-first, evidence-driven connector generation
 and maintenance. Current slices implement WO-1 setup, WO-2 durable foundations,
-and WO-5 independent GitHub fixtures and verification scaffolding.
+WO-5 independent GitHub fixtures/verification scaffolding, and WO-3 owner security.
 
 ## Implemented
 
@@ -24,7 +24,7 @@ and WO-5 independent GitHub fixtures and verification scaffolding.
 - Fixed public schemas/acceptance cases and a credential-free, network-isolated
   boundary probe harness. Hash-locked dependency scanning fails closed.
 
-**Not implemented:** owner login, secret storage, source ingestion, executable
+**Not implemented:** owner-login UI, source ingestion, executable
 connector mappings, model generation, actual job orchestration, publication API,
 MCP, workflows, or drift repair. Database job primitives are not a working build
 pipeline. Fixture tests do not establish generated-adapter acceptance. No live
@@ -39,10 +39,14 @@ verification scripts. Containers use Python 3.12 and Node 22.
    an account password or commit `.env`.
 2. Run `make dev` (API startup applies migrations under a database advisory lock).
 3. Open http://127.0.0.1:5173. Non-sensitive API health is at
-   http://127.0.0.1:8000/health. Management and connector invocation routes remain
-   unavailable. Worker readiness also depends on its retained heartbeat.
+   http://127.0.0.1:8000/health. Owner-only connection/approval management is
+   available; ordinary connector invocation remains unimplemented. Worker readiness
+   also depends on its retained heartbeat; missing owner/encryption files degrade API health.
 
 ```sh
+make verify-auth        # Owner/HTTP boundary tests plus actual session/secret restart
+make verify-connections # AES-GCM secrets, rotation/revocation, safe fake-driver diagnostics
+make verify-policy      # Resource denial, exact/concurrent single-use approvals, unknown writes
 make verify-setup       # Configuration, actual processes/proxy, web build, pip consistency
 make verify-restart     # Above plus a disposable PostgreSQL restart probe
 make verify-durability  # PostgreSQL integration tests plus database/API/worker restart
@@ -56,6 +60,54 @@ records. `make status`, `make logs`, and `make stop` inspect or stop services wi
 removing data. Credentials initialize a fresh database volume only; changing `.env`
 does not rotate an existing password. Use PostgreSQL's rotation procedure to retain
 data. `docker compose down --volumes` destroys a disposable development database.
+
+## Owner configuration and control boundary
+
+`make dev` first runs explicit offline `make provision`. When app-owned credentials
+are not supplied through encrypted workspace settings, it creates independent random
+owner, vault-encryption, and future MCP gateway secrets in separate named volumes.
+Directories are mode 0700, newly created files mode 0600, and the runtime account owns
+them. Repeating provisioning preserves existing values. No value is printed or
+committed. API mounts owner/vault files read-only; the worker mounts vault only;
+fixtures, web, and isolated probe containers mount none of these secrets.
+
+Only the operator can explicitly retrieve the owner credential in their own terminal:
+
+```sh
+docker compose run --rm --no-deps secret-init show-owner
+```
+
+Do not paste that output into chat or diagnostics. The backend requires secure owner
+configuration; there is no anonymous/default-password fallback. `OWNER_ACCESS_TOKEN`
+and `SECRET_ENCRYPTION_KEY` remain optional secure environment overrides; their
+`*_FILE` alternatives point to protected files. Keep encrypted database backups and
+vault-key backups together under appropriate protection. Deleting the vault volume
+without restoring its key makes retained ciphertext unrecoverable. This is a local
+prototype secret store, not a managed KMS or portable backup service.
+
+Owner login: `POST /auth/login`, logout: `POST /auth/logout`, session: `GET /auth/session`.
+Login requires the configured frontend Origin; mutations require that Origin, the
+HttpOnly/SameSite Strict session cookie, and `X-CSRF-Token` from login/session. Sessions
+are opaque, stored by hash, revocable, credential-epoch-bound, and expire after eight
+hours. Validation errors do not echo inputs; failed logins are persistently rate-limited.
+Body collection is bounded before credential-bearing validation. The login UI is WO-9.
+
+Rotate a generated owner credential without displaying it:
+
+```sh
+docker compose run --rm --no-deps secret-init rotate-owner
+```
+
+Prior sessions invalidate on their next request. If an environment override is active,
+rotate that secure setting instead and reload; it takes precedence over files.
+
+Owner-only connection/approval routes store AES-256-GCM ciphertext bound to the
+connection ID, opaque references, resource policies, and exact single-use approvals.
+Resource policy changes/credential rotation revoke outstanding approvals. Trusted
+fake-driver tests classify authentication/permission/reachability/unsupported-auth
+errors without asking the generator to rewrite adapters. Policy denial precedes
+credential resolution/provider contact. Actual protocol calls integrate in WO-6.
+Live connections remain disabled until their later gates pass.
 
 ## Fixture ownership and security gates
 
@@ -90,10 +142,10 @@ retained for later source/runtime integration, not represented as passed now.
 `.8090/environment.json` uses the default image, installs the web lockfile, starts
 `make dev`, and follows service logs. Supply `POSTGRES_PASSWORD` through encrypted
 workspace settings, then reload the working branch. Docker/Compose must be available.
-No secret belongs in tracked source or environment configuration. No model or live
-provider key is required yet. Later slices will request owner/encryption/model
-credentials securely; incoming owner/MCP credentials remain separate from downstream
-provider credentials.
+No secret belongs in tracked source or environment configuration. The owner selected Anthropic and supplied its key through encrypted workspace
+settings; a reload applies it to the trusted worker only. Genuine generation and
+model pricing/cost enforcement remain WO-7 gates, not acceptance of this security
+slice. Incoming owner/MCP credentials remain separate from downstream credentials.
 
 ## Layout and next slices
 
@@ -104,7 +156,7 @@ provider credentials.
 - `tests/`: real PostgreSQL/process restart checks and provider/security probe tests.
 - `tools/`: trusted isolated-runner supervisor and hash-locked audit tooling.
 
-Next: owner policy/secrets (WO-3), bounded source intake (WO-4), deterministic
+Next: bounded source intake (WO-4), deterministic
 REST runtime (WO-6), genuine model-backed generation (WO-7), controlled publication
 (WO-8), and the build UI (WO-9). Later milestones add Slack/MCP, legacy workflows,
 and drift repair. Replay, simulator, and live evidence must stay clearly labeled.

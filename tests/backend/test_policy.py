@@ -97,3 +97,12 @@ class PolicyTests(SecurityBase):
     def test_argument_digest_is_canonical_and_rejects_nonfinite_values(self):
         self.assertEqual(arguments_digest({"b":2,"a":1}),arguments_digest({"a":1,"b":2}))
         with self.assertRaises(ValueError): arguments_digest({"number":float("nan")})
+
+    def test_schema_references_cannot_fetch_remote_resources(self):
+        from unittest.mock import patch
+        from connector_studio.contracts import offline_validator
+        with patch("urllib.request.urlopen") as network:
+            with self.assertRaises(ValueError): offline_validator({"$ref":"http://169.254.169.254/schema"})
+            validator = offline_validator({"$defs":{"Value":{"type":"integer"}},"$ref":"#/$defs/Value"})
+            validator.validate(1)
+            self.assertEqual(network.call_count,0)
