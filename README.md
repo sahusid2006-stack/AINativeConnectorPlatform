@@ -8,7 +8,8 @@ and maintenance. This initial change implements **WO-1 infrastructure only**.
 - Local React/TypeScript development shell with a real API health check.
 - Separate health-only API, worker, and independent-fixture processes.
 - PostgreSQL 16 with a persistent named volume and no published database port.
-- Loopback-only web/API ports, private network, health checks, locked dependencies,
+- Loopback-only web/API ports on an edge network, a private database/worker/fixture
+  network, health checks, locked dependencies,
   secure configuration references, and setup smoke tests.
 
 **Not implemented:** owner login, connector operations, application simulator

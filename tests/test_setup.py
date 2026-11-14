@@ -33,6 +33,10 @@ class SetupTests(unittest.TestCase):
 
     def test_private_network_and_persistent_postgres(self):
         self.assertTrue(self.config["networks"]["private"]["internal"])
+        for role in ("postgres", "worker", "fixtures"):
+            self.assertEqual(set(self.config["services"][role]["networks"]), {"private"})
+        self.assertIn("edge", self.config["services"]["api"]["networks"])
+        self.assertEqual(set(self.config["services"]["web"]["networks"]), {"edge"})
         volume = self.config["services"]["postgres"]["volumes"][0]
         self.assertEqual(volume["type"], "volume")
         self.assertEqual(volume["target"], "/var/lib/postgresql/data")

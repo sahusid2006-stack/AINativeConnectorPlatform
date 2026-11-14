@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]

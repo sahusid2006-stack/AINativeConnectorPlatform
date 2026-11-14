@@ -21,7 +21,7 @@ function App() {
   }, []);
   return <main>
     <p className="eyebrow">Connector Studio · Development setup</p>
-    <h1>The foundation is ready for development.</h1>
+    <h1>Build the foundation first.</h1>
     <p role="status">{status}</p>
     <section aria-labelledby="scope">
       <h2 id="scope">Infrastructure scaffold only</h2>
