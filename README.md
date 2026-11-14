@@ -39,6 +39,9 @@ Python 3.12 and Node 22. No host Python/Node packages are needed to start the ap
    make verify-setup
    ```
 
+`make verify-restart` additionally restarts PostgreSQL and confirms a disposable
+probe survives; it removes the probe afterward. Do not run it during active work.
+
 `make status` lists health, `make logs` shows process logs, and `make stop` stops
 services **without deleting data**. PostgreSQL credentials initialize a fresh
 volume only: changing the configuration does not rotate an existing database

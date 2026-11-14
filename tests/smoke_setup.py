@@ -1,5 +1,7 @@
 """Verify only startup plumbing, never connector behavior or model generation."""
+import argparse
 import json
+import uuid
 from pathlib import Path
 import subprocess
 import urllib.error
@@ -15,7 +17,27 @@ def compose(*args):
     ).stdout
 
 
+def verify_restart():
+    table = "setup_probe_" + uuid.uuid4().hex
+    def sql(statement):
+        return compose("exec", "-T", "postgres", "psql", "-U", "connector_studio",
+                       "-d", "connector_studio", "-v", "ON_ERROR_STOP=1", "-Atc", statement)
+    sql(f"CREATE TABLE {table} (value integer); INSERT INTO {table} VALUES (1)")
+    try:
+        compose("restart", "postgres")
+        compose("up", "--wait", "--wait-timeout", "180")
+        assert sql(f"SELECT value FROM {table}").strip() == "1", "Database data must survive restart"
+    finally:
+        sql(f"DROP TABLE IF EXISTS {table}")
+    print("PostgreSQL restart persistence probe passed.")
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--restart", action="store_true", help="Also restart PostgreSQL and check a disposable probe")
+    args = parser.parse_args()
+    if args.restart:
+        verify_restart()
     for role in ("api", "worker", "fixtures"):
         result = compose(
             "exec", "-T", role, "python", "-c",

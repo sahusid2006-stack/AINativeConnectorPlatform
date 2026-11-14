@@ -1,4 +1,4 @@
-.PHONY: dev stop status logs verify-setup verify-config
+.PHONY: dev stop status logs verify-setup verify-config verify-restart
 
 dev:
 	docker compose up --build --wait --wait-timeout 180
@@ -17,3 +17,6 @@ verify-config:
 
 verify-setup: verify-config
 	python3 tests/smoke_setup.py
+
+verify-restart: verify-config
+	python3 tests/smoke_setup.py --restart
