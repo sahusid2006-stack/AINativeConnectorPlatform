@@ -1,44 +1,75 @@
-"""Health-only process scaffolds. No product or provider invocation routes."""
-
+"""Infrastructure health and private simulator routing; no connector execution API."""
+from contextlib import asynccontextmanager
 import os
+from threading import Event, Thread
 
-import psycopg
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from .database import database_engine
+from .repositories import EvidenceStore
 
 ROLE = os.environ.get("SERVICE_ROLE", "api")
 if ROLE not in {"api", "worker", "fixtures"}:
     raise RuntimeError("Unsupported service role")
 
-app = FastAPI(title=f"Connector Studio {ROLE} bootstrap", docs_url=None, redoc_url=None, openapi_url=None)
+
+@asynccontextmanager
+async def lifespan(app):
+    engine = database_engine()
+    app.state.store = EvidenceStore(engine)
+    stop = Event()
+    thread = None
+    if ROLE == "worker":
+        def heartbeat():
+            while not stop.is_set():
+                try:
+                    app.state.store.heartbeat("worker_process")
+                except SQLAlchemyError:
+                    # Includes migration/startup races and database restarts. Never log DSNs.
+                    pass
+                stop.wait(2)
+        thread = Thread(target=heartbeat, daemon=True, name="worker-heartbeat")
+        thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        if thread:
+            thread.join(timeout=4)
+        engine.dispose()
+
+
+app = FastAPI(title=f"Connector Studio {ROLE} foundations", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+if ROLE == "fixtures":
+    from .github_simulator import router
+    app.include_router(router)
 
 
 @app.get("/health")
 def health() -> JSONResponse:
-    """Check infrastructure without disclosing connection details or secrets."""
+    """Report process availability, explicitly not build/scheduler progress."""
     database_ready = False
-    password = os.environ.get("POSTGRES_PASSWORD", "")
-    if password:
-        try:
-            with psycopg.connect(
-                host=os.environ.get("POSTGRES_HOST", "postgres"),
-                dbname="connector_studio",
-                user="connector_studio",
-                password=password,
-                connect_timeout=3,
-            ) as conn:
-                conn.execute("SELECT 1")
-            database_ready = True
-        except psycopg.Error:
-            # Connection exceptions can contain sensitive DSNs. Never emit them.
-            pass
-    return JSONResponse(
-        status_code=200 if database_ready else 503,
-        content={
-            "service": ROLE,
-            "status": "ready" if database_ready else "unavailable",
-            "stage": "infrastructure-only",
-            "database": "reachable" if database_ready else "unavailable",
-            "product_features": "not_implemented",
-        },
-    )
+    workers = {"worker_process": "degraded", "scheduler": "not_implemented"}
+    try:
+        with app.state.store.engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        database_ready = True
+        if ROLE in {"api", "worker"}:
+            workers.update(app.state.store.worker_health(["worker_process"], stale_seconds=10))
+    except SQLAlchemyError:
+        # Exceptions can contain connection details; never emit them.
+        pass
+    status = "unavailable" if not database_ready else (
+        "degraded" if ROLE in {"api", "worker"} and workers["worker_process"] != "ready" else "ready")
+    return JSONResponse(status_code=200 if status == "ready" else 503, content={
+        "service": ROLE, "status": status,
+        "stage": "simulator-fixtures" if ROLE == "fixtures" else "infrastructure-only",
+        "database": "reachable" if database_ready else "unavailable",
+        "workers": workers if ROLE in {"api", "worker"} else {},
+        "job_processing": "not_implemented",
+        "product_features": "github_simulator_only" if ROLE == "fixtures" else "not_implemented",
+    })

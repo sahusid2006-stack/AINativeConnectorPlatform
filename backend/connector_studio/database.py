@@ -14,7 +14,7 @@ def database_engine():
         raise RuntimeError("POSTGRES_PASSWORD must be securely configured")
     url = URL.create("postgresql+psycopg", username="connector_studio", password=password,
                      host=os.environ.get("POSTGRES_HOST", "postgres"), database="connector_studio")
-    return create_engine(url, pool_pre_ping=True, hide_parameters=True)
+    return create_engine(url, pool_pre_ping=True, hide_parameters=True, connect_args={"connect_timeout": 3})
 
 
 def migrate(engine):

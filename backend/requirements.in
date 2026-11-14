@@ -4,3 +4,5 @@ psycopg[binary]>=3.2,<4
 SQLAlchemy>=2.0,<3
 alembic>=1.15,<2
 jsonschema>=4.23,<5
+
+pip>=26.2,<27

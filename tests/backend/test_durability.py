@@ -171,6 +171,13 @@ class DurabilityTests(unittest.TestCase):
         with self.assertRaises(DBAPIError):
             with self.engine.begin() as conn: conn.execute(delete(m.audit_events).where(m.audit_events.c.id==row["id"]))
 
+    def test_fixed_report_records_are_immutable(self):
+        _,_,version=self.candidate()
+        report=self.store.report(version,False,{"failed":"required case"})
+        with self.assertRaises(DBAPIError):
+            with self.engine.begin() as conn:
+                conn.execute(update(m.test_runs).where(m.test_runs.c.id==report).values(passed=True))
+
     def test_dedupe_survives_connection_restart_and_concurrent_delivery(self):
         consumer=uuid.uuid4()
         with ThreadPoolExecutor(max_workers=6) as pool:

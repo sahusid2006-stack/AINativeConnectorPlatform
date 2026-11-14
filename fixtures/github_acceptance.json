@@ -1,0 +1,17 @@
+{
+  "ownership": "fixed independently maintained acceptance fixtures; generator must not edit",
+  "public_contract": "contracts/github.schema.json",
+  "cases": [
+    {"id":"list-page-1","operation":"list_issues","input":{"owner":"demo","repo":"connector-fixture","page":1,"per_page":2},"expected":{"issues":[{"number":1,"title":"Demo issue 1","body":"order_id: ORD-1001","state":"open","html_url":"https://github.com/demo/connector-fixture/issues/1"}],"next_page":2}},
+    {"id":"list-page-2","operation":"list_issues","input":{"owner":"demo","repo":"connector-fixture","page":2,"per_page":2},"expected_numbers":[3,4],"expected_next_page":null},
+    {"id":"get-success","operation":"get_issue","input":{"owner":"demo","repo":"connector-fixture","issue_number":1},"expected_title":"Demo issue 1"},
+    {"id":"create-success","operation":"create_issue","input":{"owner":"demo","repo":"connector-fixture","title":"Synthetic new issue"},"approval":"explicit single-use simulator approval required by runtime","expected_number":5},
+    {"id":"invalid-input","operation":"get_issue","input":{"owner":"demo","repo":"connector-fixture","issue_number":0},"expected_error":"validation"},
+    {"id":"authentication-failure","scenario":"bad-token","expected_error":"authentication"},
+    {"id":"missing-object","issue_number":999,"expected_error":"not_found"},
+    {"id":"permission-failure","scenario":"permission","expected_error":"permission"},
+    {"id":"rate-limit","scenario":"rate_limit","expected_error":"rate_limit","retry_after":1},
+    {"id":"upstream-error","scenario":"upstream_error","expected_error":"upstream"},
+    {"id":"uncertain-write","scenario":"ambiguous_write","expected_error":"outcome_unknown","expected_provider_writes":1}
+  ]
+}
