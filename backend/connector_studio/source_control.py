@@ -7,6 +7,7 @@ import uuid
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 from pydantic import Field
 from sqlalchemy import select
 
@@ -51,7 +52,7 @@ def sanitize(text):
     text=redacted(text)
     text=re.sub(r"\b(?:sk-ant-|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}","[REDACTED]",text)
     text=re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9_.~+/=-]{16,}",r"\1[REDACTED]",text)
-    text=re.sub(r'''(?im)((?:["']?)(?:password|api[_-]?key|access_token|credential_value|secret)(?:["']?)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[A-Za-z0-9_./+-]+)''',r'\1"[REDACTED]"',text)
+    text=re.sub(r'''(?im)((?:["']?)(?:password|api[_-]?key|access_token|token|credential_value|client_secret|secret)(?:["']?)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[A-Za-z0-9_./+-]+)''',r'\1"[REDACTED]"',text)
     return text
 
 
@@ -90,6 +91,7 @@ def propose(store, source_ids):
         peers=[other for other in operations if (other["facts"]["method"],other["facts"]["path"])==(item["facts"]["method"],item["facts"]["path"])]
         if any(other["facts"]!=item["facts"] for other in peers): item["unresolved"].append(unresolved("noncontradictory endpoint/schema/authentication facts",item["name"]))
     document={"operations":operations,"unresolved":missing,"status":"blocked" if missing or any(item["unresolved"] for item in operations) else "ready_for_selection","extraction":"deterministic","source_instructions":"data_only"}
+    if len(json.dumps(document).encode())>MAX_BYTES: raise AccessError("source_proposal_limit",413)
     proposal_id=uuid.uuid4()
     with store.engine.begin() as conn:
         conn.execute(m.source_proposals.insert().values(id=proposal_id,source_ids=[str(value) for value in source_ids],document=document))
@@ -124,7 +126,7 @@ def fetch(data: FetchInput,request: Request):
     hydrate_redaction(request.app.state.store.engine)
     try: final,mime,content=fetch_source(data.url,data.approved_origins)
     except AccessError as error:
-        return {"status":"blocked","unresolved":[{"fact":"source","category":error.category,"input_needed":"Provide an accessible supported source at an approved public destination or upload the document."}],"generation":"not_started"}
+        return JSONResponse({"status":"blocked","unresolved":[{"fact":"source","category":error.category,"input_needed":"Provide an accessible supported source at an approved public destination or upload the document."}],"generation":"not_started"},status_code=error.status)
     return {"source_id":retain(request.app.state.store,data.url,final,mime,content,data.approved_origins),"status":"retained"}
 
 
@@ -135,7 +137,8 @@ def read_source(source_id: uuid.UUID,request: Request):
         meta=conn.execute(select(m.source_intake).where(m.source_intake.c.source_id==source_id)).mappings().first()
     if row is None: raise AccessError("source_not_found",404)
     hydrate_redaction(request.app.state.store.engine)
-    return {"source_id":source_id,"origin":redacted(row["origin"]),"retrieved_at":row["created_at"],"digest":row["digest"],"mime_type":row["mime_type"],"content":sanitize(row["content"].decode()),"redacted":meta["redacted"] if meta else False}
+    displayed=sanitize(row["content"].decode())
+    return {"source_id":source_id,"origin":sanitize(row["origin"]),"retrieved_at":row["created_at"],"digest":row["digest"],"mime_type":row["mime_type"],"content":displayed,"redacted":bool(meta and meta["redacted"]) or displayed!=row["content"].decode()}
 
 
 @router.post("/sources/proposals",status_code=201)

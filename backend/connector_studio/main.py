@@ -80,12 +80,12 @@ def health() -> JSONResponse:
         "degraded" if not owner_ready or (ROLE in {"api", "worker"} and workers["worker_process"] != "ready") else "ready")
     return JSONResponse(status_code=200 if status == "ready" else 503, content={
         "service": ROLE, "status": status,
-        "stage": "simulator-fixtures" if ROLE == "fixtures" else "owner-security" if ROLE == "api" else "infrastructure-only",
+        "stage": "simulator-fixtures" if ROLE == "fixtures" else "source-intake" if ROLE == "api" else "infrastructure-only",
         "owner_access": "configured" if owner_ready and ROLE == "api" else "unavailable" if ROLE == "api" else "not_applicable",
         "database": "reachable" if database_ready else "unavailable",
         "workers": workers if ROLE in {"api", "worker"} else {},
         "job_processing": "not_implemented",
-        "product_features": "github_simulator_only" if ROLE == "fixtures" else "owner_security_only" if ROLE == "api" else "not_implemented",
+        "product_features": "github_simulator_only" if ROLE == "fixtures" else "owner_security_and_source_intake" if ROLE == "api" else "not_implemented",
     })
 
 

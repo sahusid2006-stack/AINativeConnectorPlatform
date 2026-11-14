@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from . import models as m
 from .provisioning import configured_secret
 from .repositories import EvidenceStore
+from .redaction import remember
 
 
 class AccessError(Exception):
@@ -62,6 +63,8 @@ class OwnerAccess:
                 session = {"token":token, "csrf_token":csrf, "actor":"owner"}
         if error:
             raise error
+        remember(session["token"])
+        remember(session["csrf_token"])
         return session
 
     def authenticate(self, token, csrf=None, write=False):
@@ -74,6 +77,8 @@ class OwnerAccess:
                 result = {"actor":"owner", "csrf_token":row["csrf_token"]}
         if not result:
             raise AccessError("unauthenticated" if not row else "csrf_failed", 401 if not row else 403)
+        remember(token)
+        remember(result["csrf_token"])
         return result
 
     def logout(self, token):

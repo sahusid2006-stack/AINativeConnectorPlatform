@@ -29,7 +29,9 @@ class FetchTests(unittest.TestCase):
     def test_metadata_private_loopback_mapped_and_translated_denied(self):
         for address in ("169.254.169.254","127.0.0.1","10.0.0.1","::1","::ffff:169.254.169.254","2002:0a00:0001::1","64:ff9b::a9fe:a9fe"):
             with self.assertRaises(AccessError): DestinationGuard(["https://docs.example"],lambda *_:{address}).check("https://docs.example/x")
-        DestinationGuard(["http://fixtures:8000"],lambda *_:{"172.18.0.4"}).check("http://fixtures:8000/docs")
+        DestinationGuard(["http://fixtures:8000"],lambda *_:{"172.18.0.4","fd22:63c:705a:1::5"}).check("http://fixtures:8000/docs")
+        for address in ("fd00:ec2::254","fd20:ce::254"):
+            with self.assertRaises(AccessError): DestinationGuard(["http://fixtures:8000"],lambda *_:{address}).check("http://fixtures:8000/docs")
         with self.assertRaises(AccessError): DestinationGuard(["http://fixtures:8000"],lambda *_:{"127.0.0.1"}).check("http://fixtures:8000/docs")
 
     def test_mixed_dns_answers_and_rebinding_on_redirect_denied(self):
@@ -82,6 +84,24 @@ class ParserTests(unittest.TestCase):
         for content,mime in cases:
             with self.assertRaises(AccessError): parse_document(content,mime)
         with self.assertRaises(AccessError): parse_document(b'x'*(MAX_BYTES+1),"text/plain")
+
+    def test_local_references_and_inherited_parameters_are_materialized(self):
+        document=spec();operation=document["paths"]["/things/{id}"]["get"]
+        document["components"]={"schemas":{"Thing":{"type":"object","properties":{"name":{"type":"string"}}}}}
+        operation["responses"]["200"]["content"]["application/json"]["schema"]={"$ref":"#/components/schemas/Thing"}
+        document["paths"]["/things/{id}"]["parameters"]=operation.pop("parameters")
+        operation["parameters"]=[{"name":"page","in":"query","schema":{"type":"integer"}}]
+        items,_=proposals(json.dumps(document).encode(),"application/json")
+        self.assertFalse(items[0]["unresolved"])
+        self.assertEqual(set(items[0]["facts"]["input_schema"]["properties"]),{"id","page"})
+        self.assertEqual(items[0]["facts"]["output_schema"],document["components"]["schemas"]["Thing"])
+
+    def test_recursive_references_and_invalid_schemas_never_ready(self):
+        document=spec();schema=document["paths"]["/things/{id}"]["get"]["responses"]["200"]["content"]["application/json"]
+        for value in ({"type":42},{"$ref":"#/components/schemas/Loop"}):
+            document["components"]={"schemas":{"Loop":{"$ref":"#/components/schemas/Loop"}}};schema["schema"]=value
+            items,_=proposals(json.dumps(document).encode(),"application/json")
+            self.assertTrue(items[0]["unresolved"])
 
 
 class SourcePersistenceTests(SecurityBase):
@@ -137,6 +157,19 @@ class SourcePersistenceTests(SecurityBase):
             document=proposal.json()
             selected=client.post('/sources/proposals/'+document["proposal_id"]+'/selection',json={"operation_ids":[document["operations"][0]["id"]]},headers=headers)
             self.assertEqual(selected.status_code,201,selected.text)
+            cookie=client.cookies.get("connector_session")
+            sensitive=client.post('/sources/upload',content='Example '+cookie+' '+login["csrf_token"],headers={**headers,"Content-Type":"text/plain"})
+            safe=client.get('/sources/'+sensitive.json()["source_id"]).json()["content"]
+            self.assertNotIn(cookie,safe);self.assertNotIn(login["csrf_token"],safe)
             with patch('connector_studio.source_control.fetch_source',side_effect=AccessError('source_destination_denied',422)):
                 blocked=client.post('/sources/fetch',json={"url":"https://docs.example","approved_origins":["https://docs.example"]},headers=headers)
                 self.assertEqual(blocked.json()["status"],"blocked");self.assertIn("input_needed",blocked.json()["unresolved"][0])
+
+    def test_real_fixture_fetch_uses_private_exception_without_auth(self):
+        url,mime,content=fetch_source('http://fixtures:8000/_fixture/docs',['http://fixtures:8000'])
+        self.assertEqual(url,'http://fixtures:8000/_fixture/docs')
+        self.assertIn(b'independently maintained simulator',content)
+        source=retain(self.store,url,url,mime,content,['http://fixtures:8000'])
+        result=propose(self.store,[source])
+        self.assertEqual(len(result['operations']),3)
+        self.assertEqual(result['status'],'blocked')  # Prose is not an invented complete schema.

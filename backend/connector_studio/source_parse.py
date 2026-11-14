@@ -103,6 +103,35 @@ def unresolved(fact, operation=None):
     return {"fact":fact,"operation_id":operation,"input_needed":f"Provide explicit {fact} documentation" + (f" for {operation}." if operation else ".")}
 
 
+
+def materialize(value, document, budget, trail=(), depth=0):
+    budget[0] -= 1
+    if depth > 32 or budget[0] < 0: raise AccessError("source_parser_limit",422)
+    if isinstance(value,str):
+        budget[1] -= len(value.encode())
+        if budget[1] < 0: raise AccessError("source_parser_limit",422)
+    if isinstance(value,dict):
+        if "$ref" in value:
+            reference=value["$ref"]
+            if not isinstance(reference,str) or not reference.startswith("#/") or reference in trail:
+                raise ValueError("Unsupported external or recursive reference")
+            target=document
+            try:
+                for part in reference[2:].split("/"):
+                    part=part.replace("~1","/").replace("~0","~")
+                    target=target[int(part)] if isinstance(target,list) else target[part]
+            except (KeyError,IndexError,TypeError,ValueError): raise ValueError("Unresolved local reference") from None
+            if len(value)!=1: raise ValueError("Reference siblings require explicit inline facts")
+            return materialize(target,document,budget,trail+(reference,),depth+1)
+        result={}
+        for key,child in value.items():
+            budget[1] -= len(key.encode())
+            if budget[1] < 0: raise AccessError("source_parser_limit",422)
+            result[key]=materialize(child,document,budget,trail,depth+1)
+        return result
+    if isinstance(value,list): return [materialize(child,document,budget,trail,depth+1) for child in value]
+    return value
+
 def proposals(content, mime_type):
     text, document = parse_document(content, mime_type)
     result=[]
@@ -111,11 +140,13 @@ def proposals(content, mime_type):
             return [], [unresolved("OpenAPI 3.0 document (3.1/Swagger require explicit supported schemas)")]
         paths = document.get("paths")
         if not isinstance(paths, dict): return [], [unresolved("operation paths")]
+        budget=[10000,MAX_BYTES]
         for path, item in paths.items():
             if not isinstance(item, dict) or not path.startswith("/"): continue
             for method, operation in item.items():
-                if method.lower() not in {"get","post","put","patch","delete","head","options"}: continue
+                if method not in {"get","post","put","patch","delete","head","options"}: continue
                 if not isinstance(operation, dict): continue
+                if len(path)>4096: raise AccessError("source_parser_limit",422)
                 name = operation.get("operationId")
                 name = name if isinstance(name,str) and 0 < len(name) <=128 else f"{method.upper()} {path}"
                 facts={"method":method.upper(),"path":path,"base_url":None,"input_schema":None,"output_schema":None,"authentication":None}
@@ -127,7 +158,20 @@ def proposals(content, mime_type):
                         facts["base_url"]=servers[0]["url"]
                     except AccessError: missing.append(unresolved("an absolute server URL without embedded credentials",name))
                 else: missing.append(unresolved("one unambiguous absolute server URL",name))
-                parameters=operation.get("parameters",item.get("parameters",[]))
+                try:
+                    operation=materialize(operation,document,budget)
+                    inherited=materialize(item.get("parameters",[]),document,budget)
+                    own=operation.get("parameters",[])
+                    if not isinstance(inherited,list) or not isinstance(own,list): raise ValueError()
+                    inherited_keys=[(entry.get("in"),entry.get("name")) for entry in inherited if isinstance(entry,dict)]
+                    own_keys=[(entry.get("in"),entry.get("name")) for entry in own if isinstance(entry,dict)]
+                    if len(set(inherited_keys))!=len(inherited_keys) or len(set(own_keys))!=len(own_keys): raise ValueError()
+                    parameters=[entry for entry in inherited if not isinstance(entry,dict) or (entry.get("in"),entry.get("name")) not in own_keys]+own
+                except (ValueError,TypeError):
+                    parameters=None
+                    missing.append(unresolved("nonrecursive local references and unambiguous parameter definitions",name))
+                    operation={}
+
                 properties, required={},[]
                 valid=isinstance(parameters,list)
                 for parameter in parameters if valid else []:
@@ -166,6 +210,8 @@ def proposals(content, mime_type):
                 if security == []: facts["authentication"]={"type":"none"}
                 elif isinstance(security,list) and len(security)==1 and isinstance(security[0],dict) and len(security[0])==1 and isinstance(schemes,dict):
                     auth_name, scopes=next(iter(security[0].items())); definition=schemes.get(auth_name,{})
+                    try: definition=materialize(definition,document,budget)
+                    except ValueError: definition={}
                     if isinstance(definition,dict) and definition.get("type")=="http" and definition.get("scheme") in {"bearer","basic"} and scopes==[]:
                         facts["authentication"]={"type":definition["scheme"],"credential_reference_required":True}
                     elif isinstance(definition,dict) and definition.get("type")=="apiKey" and definition.get("in") in {"header","query"} and isinstance(definition.get("name"),str) and scopes==[]:
@@ -188,6 +234,9 @@ def proposals(content, mime_type):
             method,path=match.group(1),match.group(2).split("?")[0]; name=f"{method} {path}"
             facts={"method":method,"path":path,"base_url":next(iter(bases)) if len(bases)==1 else None,"authentication":{"type":next(iter(auths)).lower()} if len(auths)==1 else None,"input_schema":None,"output_schema":None}
             missing=[unresolved("explicit input JSON schema",name),unresolved("explicit output JSON schema",name)]
+            if facts["base_url"]:
+                try: origin(facts["base_url"])
+                except AccessError: facts["base_url"]=None
             if not facts["base_url"]: missing.append(unresolved("one unambiguous base URL",name))
             if not facts["authentication"]: missing.append(unresolved("explicit authentication scheme",name))
             result.append({"name":name,"facts":facts,"classification":"read" if method in {"GET","HEAD","OPTIONS"} else "write","evidence":[span(text,match.group(0).strip())],"unresolved":missing})

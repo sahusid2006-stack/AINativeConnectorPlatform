@@ -1,6 +1,7 @@
 """No ambient auth/proxies; validate every hop and connect to the validated IP."""
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
 from threading import BoundedSemaphore, Event, Thread, Timer
@@ -47,7 +48,7 @@ def origin(url):
             key = key.lower().replace("-", "_")
             if key in {"token", "key", "api_key", "password", "secret", "authorization"} or key.endswith(("_token", "_key", "_secret", "_password")):
                 raise ValueError()
-        if redacted(url) != url:
+        if redacted(url) != url or re.search(r"(?:sk-ant-|gh[pousr]_|github_pat_|xox[baprs]-)[A-Za-z0-9_-]{10,}",url):
             raise ValueError()
         authority = f"[{host}]" if ":" in host else host
         default = 443 if parsed.scheme == "https" else 80
@@ -79,8 +80,10 @@ class DestinationGuard:
             ip = ipaddress.ip_address(address)
             normalized = ip.ipv4_mapped if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped else ip
             # Only this app-owned Docker fixture alias gets an RFC1918 exception.
-            fixture = destination == "http://fixtures:8000" and isinstance(normalized, ipaddress.IPv4Address) and any(
+            fixture_v4 = isinstance(normalized, ipaddress.IPv4Address) and any(
                 normalized in network for network in (ipaddress.ip_network("10.0.0.0/8"), ipaddress.ip_network("172.16.0.0/12"), ipaddress.ip_network("192.168.0.0/16")))
+            fixture_v6 = isinstance(normalized, ipaddress.IPv6Address) and normalized in ipaddress.ip_network("fc00::/7") and normalized not in {ipaddress.ip_address("fd00:ec2::254"),ipaddress.ip_address("fd20:ce::254")}
+            fixture = destination == "http://fixtures:8000" and (fixture_v4 or fixture_v6)
             translated = isinstance(ip, ipaddress.IPv6Address) and (ip.sixtofour or ip.teredo or ip in ipaddress.ip_network("64:ff9b::/96") or ip in ipaddress.ip_network("64:ff9b:1::/48"))
             if translated or (not normalized.is_global and not fixture):
                 raise AccessError("source_address_denied", 422)
