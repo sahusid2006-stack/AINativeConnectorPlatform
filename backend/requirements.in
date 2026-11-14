@@ -7,5 +7,5 @@ jsonschema>=4.23,<5
 
 pip>=26.2,<27
 
-cryptography>=45,<50
+cryptography>=50,<51
 httpx>=0.28,<1
