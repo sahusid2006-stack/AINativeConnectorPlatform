@@ -20,3 +20,8 @@ verify-setup: verify-config
 
 verify-restart: verify-config
 	python3 tests/smoke_setup.py --restart
+
+.PHONY: verify-durability
+verify-durability:
+	docker compose exec -T api python -m unittest discover -s tests -p test_durability.py -v
+	python3 tests/smoke_durability.py
