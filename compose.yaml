@@ -1,0 +1,77 @@
+name: connector-studio
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  init: true
+  environment: &backend-env
+    POSTGRES_HOST: postgres
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in workspace secrets or a local .env file}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [private]
+  healthcheck:
+    test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+    interval: 5s
+    timeout: 5s
+    start_period: 10s
+    retries: 12
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: connector_studio
+      POSTGRES_DB: connector_studio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in workspace secrets or a local .env file}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U connector_studio -d connector_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  api:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SERVICE_ROLE: api
+    ports: ["127.0.0.1:8000:8000"]
+  worker:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SERVICE_ROLE: worker
+  fixtures:
+    <<: *backend
+    environment:
+      <<: *backend-env
+      SERVICE_ROLE: fixtures
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["127.0.0.1:5173:5173"]
+    networks: [private]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:5173').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+networks:
+  private:
+    internal: true
+volumes:
+  postgres-data:

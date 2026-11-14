@@ -1,0 +1,21 @@
+name: Setup verification
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure an ephemeral test database credential
+        run: |
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          echo "POSTGRES_PASSWORD=$password" >> "$GITHUB_ENV"
+      - run: make dev
+      - run: make verify-setup
+      - if: failure()
+        run: docker compose ps
+      - if: always()
+        run: docker compose down --volumes

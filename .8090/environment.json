@@ -1,0 +1,8 @@
+{
+  "name": "Connector Studio",
+  "install": "npm --prefix frontend ci",
+  "start": "make dev",
+  "terminals": [
+    { "name": "connector-studio", "command": "docker compose logs --follow --tail 50" }
+  ]
+}
