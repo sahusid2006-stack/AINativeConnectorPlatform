@@ -46,8 +46,8 @@ def main():
         health = json.loads(result)
         assert health["service"] == role
         assert health["status"] == "ready"
-        assert health["stage"] == ("simulator-fixtures" if role == "fixtures" else "infrastructure-only")
-        assert health["product_features"] == ("github_simulator_only" if role == "fixtures" else "not_implemented")
+        assert health["stage"] == ("simulator-fixtures" if role == "fixtures" else "owner-security" if role == "api" else "infrastructure-only")
+        assert health["product_features"] == ("github_simulator_only" if role == "fixtures" else "owner_security_only" if role == "api" else "not_implemented")
     with urllib.request.urlopen("http://127.0.0.1:5173/api/health", timeout=10) as response:
         assert json.load(response)["service"] == "api", "Web proxy must reach the real API"
     with urllib.request.urlopen("http://127.0.0.1:5173", timeout=10) as response:
@@ -56,7 +56,7 @@ def main():
         try:
             urllib.request.urlopen(f"http://127.0.0.1:8000{path}", timeout=10)
         except urllib.error.HTTPError as error:
-            assert error.code == 404
+            assert error.code == 401
         else:
             raise AssertionError("Bootstrap must not expose product endpoints")
     compose("run", "--rm", "--no-deps", "web", "npm", "run", "build")

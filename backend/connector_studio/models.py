@@ -51,7 +51,8 @@ approvals = Table("approvals", metadata, identity(), created(),
     Column("version_id", ForeignKey("connector_versions.id"), nullable=False),
     Column("operation", String, nullable=False), Column("arguments_digest", String(64), nullable=False),
     Column("actor", String, nullable=False), Column("expires_at", DateTime(timezone=True), nullable=False),
-    Column("consumed_at", DateTime(timezone=True)), Column("revoked_at", DateTime(timezone=True)))
+    Column("consumed_at", DateTime(timezone=True)), Column("revoked_at", DateTime(timezone=True)),
+    Column("policy_revision", Integer, nullable=False, server_default="1"))
 jobs = Table("build_jobs", metadata, identity(), created(),
     Column("connector_id", ForeignKey("connectors.id")), Column("kind", String, nullable=False),
     Column("status", String, nullable=False, server_default="queued"),
@@ -89,3 +90,16 @@ deliveries = Table("delivery_deduplication", metadata, identity(), created(),
     Column("provider", String, nullable=False), Column("delivery_id", String, nullable=False),
     Column("consumer_id", UUID(as_uuid=True), nullable=False), Column("status", String, nullable=False),
     UniqueConstraint("provider", "delivery_id", "consumer_id"))
+
+owner_epoch = Table("owner_epoch", metadata,
+    Column("id", Integer, primary_key=True), Column("fingerprint", String(64), nullable=False))
+sessions = Table("owner_sessions", metadata,
+    Column("token_hash", String(64), primary_key=True), created(),
+    Column("fingerprint", String(64), nullable=False), Column("csrf_token", String(64), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False))
+login_limits = Table("login_limits", metadata,
+    Column("id", Integer, primary_key=True), Column("attempts", Integer, nullable=False),
+    Column("window_start", DateTime(timezone=True), nullable=False))
+connection_secrets = Table("connection_secrets", metadata, identity(), created(),
+    Column("connection_id", ForeignKey("connections.id"), nullable=False, unique=True),
+    Column("ciphertext", LargeBinary, nullable=False), Column("revoked_at", DateTime(timezone=True)))

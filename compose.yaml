@@ -24,6 +24,28 @@ x-backend: &backend
     start_period: 10s
     retries: 12
 services:
+  secret-init:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+    user: "0:0"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    environment:
+      OWNER_ACCESS_TOKEN: ${OWNER_ACCESS_TOKEN:-}
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-}
+      MCP_GATEWAY_TOKEN: ${MCP_GATEWAY_TOKEN:-}
+    volumes:
+      - owner-secrets:/run/owner
+      - vault-secrets:/run/vault
+      - gateway-secrets:/run/gateway
+    entrypoint: [python, -m, connector_studio.provisioning]
+    command: [init]
   postgres:
     image: postgres:16-bookworm
     environment:
@@ -42,6 +64,13 @@ services:
     environment:
       <<: *backend-env
       SERVICE_ROLE: api
+      OWNER_ACCESS_TOKEN: ${OWNER_ACCESS_TOKEN:-}
+      OWNER_ACCESS_TOKEN_FILE: /run/owner/credential
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-}
+      SECRET_ENCRYPTION_KEY_FILE: /run/vault/key
+    volumes:
+      - owner-secrets:/run/owner:ro
+      - vault-secrets:/run/vault:ro
     networks: [private, edge]
     ports: ["127.0.0.1:8000:8000"]
   worker:
@@ -49,6 +78,12 @@ services:
     environment:
       <<: *backend-env
       SERVICE_ROLE: worker
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-}
+      SECRET_ENCRYPTION_KEY_FILE: /run/vault/key
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - vault-secrets:/run/vault:ro
   fixtures:
     <<: *backend
     environment:
@@ -78,3 +113,6 @@ networks:
     internal: true
 volumes:
   postgres-data:
+  owner-secrets:
+  vault-secrets:
+  gateway-secrets:

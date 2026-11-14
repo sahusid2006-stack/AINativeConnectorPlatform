@@ -1,6 +1,6 @@
 .PHONY: dev stop status logs verify-setup verify-config verify-restart
 
-dev:
+dev: provision
 	docker compose up --build --wait --wait-timeout 180
 
 stop:
@@ -37,3 +37,17 @@ verify-security:
 	python3 -m unittest discover -s tests -p test_security_supervisor.py -v
 	docker build --target verifier -t connector-studio-verifier -f backend/Dockerfile .
 	python3 tools/verify_security.py
+
+.PHONY: provision verify-auth verify-connections verify-policy
+provision:
+	docker compose run --build --rm --no-deps secret-init init
+
+verify-auth:
+	docker compose exec -T api python -m unittest discover -s tests -p test_access.py -v
+	python3 tests/smoke_auth_restart.py
+
+verify-connections:
+	docker compose exec -T api python -m unittest discover -s tests -p test_connections.py -v
+
+verify-policy:
+	docker compose exec -T api python -m unittest discover -s tests -p test_policy.py -v
