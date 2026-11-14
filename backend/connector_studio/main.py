@@ -94,6 +94,8 @@ if ROLE == "api":
     from .control import COOKIE, ORIGIN, router as control_router
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "api"])
     app.include_router(control_router)
+    from .source_control import router as source_router
+    app.include_router(source_router)
 
     @app.middleware("http")
     async def protect_control(request, call_next):

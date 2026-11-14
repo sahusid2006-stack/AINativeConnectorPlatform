@@ -51,3 +51,7 @@ verify-connections:
 
 verify-policy:
 	docker compose exec -T api python -m unittest discover -s tests -p test_policy.py -v
+
+.PHONY: verify-source-intake
+verify-source-intake:
+	docker compose exec -T api python -m unittest discover -s tests -p test_sources.py -v

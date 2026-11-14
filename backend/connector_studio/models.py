@@ -103,3 +103,13 @@ login_limits = Table("login_limits", metadata,
 connection_secrets = Table("connection_secrets", metadata, identity(), created(),
     Column("connection_id", ForeignKey("connections.id"), nullable=False, unique=True),
     Column("ciphertext", LargeBinary, nullable=False), Column("revoked_at", DateTime(timezone=True)))
+
+source_intake = Table("source_intake_metadata", metadata,
+    Column("source_id", ForeignKey("source_snapshots.id"), primary_key=True),
+    Column("original_digest", String(64), nullable=False), Column("redacted", Boolean, nullable=False),
+    Column("requested_origin", String, nullable=False), Column("approved_origins", JSONB, nullable=False))
+source_proposals = Table("source_proposals", metadata, identity(), created(),
+    Column("source_ids", JSONB, nullable=False), Column("document", JSONB, nullable=False))
+source_selections = Table("source_selections", metadata, identity(), created(),
+    Column("proposal_id", ForeignKey("source_proposals.id"), nullable=False),
+    Column("operation_ids", JSONB, nullable=False))
