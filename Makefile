@@ -20,3 +20,20 @@ verify-setup: verify-config
 
 verify-restart: verify-config
 	python3 tests/smoke_setup.py --restart
+
+.PHONY: verify-durability
+verify-durability:
+	docker compose exec -T api python -m unittest discover -s tests -p test_durability.py -v
+	python3 tests/smoke_durability.py
+	python3 tests/smoke_worker_health.py
+
+.PHONY: verify-fixtures verify-security
+verify-fixtures:
+	docker compose exec -T api python -m unittest discover -s tests -p test_github_fixtures.py -v
+	docker compose exec -T api python -m unittest discover -s tests -p test_verification.py -v
+
+verify-security:
+	python3 tools/verify_security.py --prepare
+	python3 -m unittest discover -s tests -p test_security_supervisor.py -v
+	docker build --target verifier -t connector-studio-verifier -f backend/Dockerfile .
+	python3 tools/verify_security.py

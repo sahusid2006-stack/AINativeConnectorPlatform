@@ -5,7 +5,7 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Configure an ephemeral test database credential
@@ -15,6 +15,17 @@ jobs:
           echo "POSTGRES_PASSWORD=$password" >> "$GITHUB_ENV"
       - run: make dev
       - run: make verify-restart
+      - run: make verify-durability
+      - run: make verify-fixtures
+      - run: make verify-security
+      - name: Retain available security evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-evidence
+          path: .verification/
+          include-hidden-files: true
+          if-no-files-found: ignore
       - if: failure()
         run: docker compose ps
       - if: always()

@@ -3,6 +3,7 @@ x-backend: &backend
   build:
     context: .
     dockerfile: backend/Dockerfile
+    target: runtime
   init: true
   environment: &backend-env
     POSTGRES_HOST: postgres

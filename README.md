@@ -1,87 +1,110 @@
 # Connector Studio
 
 AI Native Connector Platform — simulator-first, evidence-driven connector generation
-and maintenance. This initial change implements **WO-1 infrastructure only**.
+and maintenance. Current slices implement WO-1 setup, WO-2 durable foundations,
+and WO-5 independent GitHub fixtures and verification scaffolding.
 
-## What's implemented
+## Implemented
 
-- Local React/TypeScript development shell with a real API health check.
-- Separate health-only API, worker, and independent-fixture processes.
-- PostgreSQL 16 with a persistent named volume and no published database port.
-- Loopback-only web/API ports on an edge network, a private database/worker/fixture
-  network, health checks, locked dependencies,
-  secure configuration references, and setup smoke tests.
+- React/TypeScript shell with a real API health check; separate API, worker,
+  fixture service, and PostgreSQL 16. Web/API ports are loopback-only; the
+  database, worker, and fixtures have no published ports.
+- Versioned PostgreSQL migrations, retained source snapshots and artifact hashes,
+  connectors/versions/operations, credential-reference-only connections, approvals,
+  test reports, append-only audit records, invocation metadata, and deduplication.
+- Transactional job claims, worker heartbeats, expiring/renewable leases, stale-worker
+  fencing, retained attempts, and deadline-aware recovery. Persisted dispatched
+  writes become `outcome_unknown` on interruption and are never auto-requeued.
+- Immutable published artifacts/source links/operations and recorded test reports.
+  Retention prunes only old terminal invocation metadata, with a minimum 30-day
+  window; it preserves evidence, pinned versions, deduplication, and unknown writes.
+- Independent **synthetic GitHub** service: list/get/create, mixed issue/pull-request
+  pages, native pagination/errors/rate limits, and ambiguous writes. Documentation
+  and provider revisions can change independently; public output stays `title`.
+- Fixed public schemas/acceptance cases and a credential-free, network-isolated
+  boundary probe harness. Hash-locked dependency scanning fails closed.
 
-**Not implemented:** owner login, connector operations, application simulator
-responses, model generation, MCP, job processing, publication, workflows, or drift
-repair. The worker and fixture processes intentionally serve health only. A ready
-health response proves infrastructure reachability, not product acceptance.
+**Not implemented:** owner login, secret storage, source ingestion, executable
+connector mappings, model generation, actual job orchestration, publication API,
+MCP, workflows, or drift repair. Database job primitives are not a working build
+pipeline. Fixture tests do not establish generated-adapter acceptance. No live
+provider is invoked and no generated Python is executed.
 
 ## Local setup
 
-Prerequisites: Docker Engine with Docker Compose and GNU Make. Python 3.10+ is
-needed for the host-side setup verification scripts; application containers use
-Python 3.12 and Node 22. No host Python/Node packages are needed to start the app.
+Prerequisites: Docker Engine with Compose, GNU Make, and Python 3.10+ for host
+verification scripts. Containers use Python 3.12 and Node 22.
 
-1. Copy `.env.example` to `.env` and set a new strong `POSTGRES_PASSWORD`.
-   Never use a GitHub account password or commit `.env`.
-2. Start the complete configured local stack:
+1. Copy `.env.example` to `.env` and set a strong `POSTGRES_PASSWORD`. Never use
+   an account password or commit `.env`.
+2. Run `make dev` (API startup applies migrations under a database advisory lock).
+3. Open http://127.0.0.1:5173. Non-sensitive API health is at
+   http://127.0.0.1:8000/health. Management and connector invocation routes remain
+   unavailable. Worker readiness also depends on its retained heartbeat.
 
-   ```sh
-   make dev
-   ```
+```sh
+make verify-setup       # Configuration, actual processes/proxy, web build, pip consistency
+make verify-restart     # Above plus a disposable PostgreSQL restart probe
+make verify-durability  # PostgreSQL integration tests plus database/API/worker restart
+make verify-fixtures    # Independent provider fixtures and fail-closed checker unit tests
+make verify-security    # Isolated boundary probes and actual Python dependency audit
+```
 
-3. Open http://127.0.0.1:5173. The API's non-sensitive health endpoint is
-   http://127.0.0.1:8000/health. No management or provider invocation endpoint exists.
-4. Verify startup plumbing and the TypeScript production build:
+Restart checks interrupt services; do not run them during active work. Durability
+checks use disposable UUID schemas and remove their test data, not application
+records. `make status`, `make logs`, and `make stop` inspect or stop services without
+removing data. Credentials initialize a fresh database volume only; changing `.env`
+does not rotate an existing password. Use PostgreSQL's rotation procedure to retain
+data. `docker compose down --volumes` destroys a disposable development database.
 
-   ```sh
-   make verify-setup
-   ```
+## Fixture ownership and security gates
 
-`make verify-restart` additionally restarts PostgreSQL and confirms a disposable
-probe survives; it removes the probe afterward. Do not run it during active work.
+See [fixtures/README.md](fixtures/README.md) and [contracts/README.md](contracts/README.md).
+The synthetic fixture credential is public test data, **not a real GitHub token**.
+Fixture reset/scenario controls are internal to the private fixture service and
+must never be attached to a public application router.
 
-`make status` lists health, `make logs` shows process logs, and `make stop` stops
-services **without deleting data**. PostgreSQL credentials initialize a fresh
-volume only: changing the configuration does not rotate an existing database
-password. Use PostgreSQL's password-rotation procedure when data must be retained.
-For a disposable development database only, `docker compose down --volumes`
-resets all data before restart.
+The trusted supervisor alone invokes Docker. Probe containers run non-root with
+no host mounts, credentials, Docker socket, or network; read-only files/fixtures,
+dropped capabilities, no-new-privileges, seccomp, 1 CPU, bounded memory/PIDs, a
+small temporary filesystem, deadlines, and forced cleanup. Memory exhaustion must
+actually OOM. On kernels without swap-limit support, verification only accepts
+proven absence of swap plus enforced cgroup memory/PID limits; otherwise it blocks.
+
+Actual scan evidence goes to ignored `.verification/security.json`; previous reports
+are retained by digest in `.verification/history/`, including failures. The scanner
+needs internet access to vulnerability databases; it is separate from isolated
+probes, has no application secrets/mounts, and is cleaned up on timeout. Every
+reported vulnerability, skipped dependency, missing report, or stale backend lock
+blocks this prototype's gate. No exceptions are silently applied. This is a Python
+package audit, **not** an OS-image or frontend vulnerability audit.
+
+The checker also requires every fixed case and separately verified generated-adapter
+and source-security evidence. Those latter checks are **pending**, so passing the
+current fixture/security targets does not authorize publication or live credentials.
+Metadata/private-host/redirect SSRF and instruction-injection attack inputs are
+retained for later source/runtime integration, not represented as passed now.
 
 ## Software Factory workspace
 
-This repository is the setup repository. `.8090/environment.json` uses the
-platform default image, installs the web lockfile, starts Compose with `make dev`,
-and follows the service logs in a configured terminal. Supply `POSTGRES_PASSWORD`
-in encrypted workspace settings, then reload the working branch. Secrets are not
-written to environment configuration or committed source. Docker/Compose must be
-available in the workspace; a setup failure must be fixed rather than ignored.
+`.8090/environment.json` uses the default image, installs the web lockfile, starts
+`make dev`, and follows service logs. Supply `POSTGRES_PASSWORD` through encrypted
+workspace settings, then reload the working branch. Docker/Compose must be available.
+No secret belongs in tracked source or environment configuration. No model or live
+provider key is required yet. Later slices will request owner/encryption/model
+credentials securely; incoming owner/MCP credentials remain separate from downstream
+provider credentials.
 
-No model or live-provider key is needed for this setup. Later work will request
-owner/secret-storage credentials and model credentials securely before those
-features run. Incoming owner/MCP credentials and downstream provider tokens stay
-separate. Do not enable live provider tokens before security verification exists.
+## Layout and next slices
 
-## Repository layout and development sequence
+- `backend/`: API/worker scaffolding, storage/recovery primitives, independent simulator.
+- `backend/migrations/`: frozen forward migrations; destructive downgrades disabled.
+- `frontend/`: setup shell only.
+- `contracts/`, `fixtures/`: independently maintained public schemas/acceptance data.
+- `tests/`: real PostgreSQL/process restart checks and provider/security probe tests.
+- `tools/`: trusted isolated-runner supervisor and hash-locked audit tooling.
 
-- `backend/`: health-only FastAPI scaffold; hash-locked Python dependencies.
-- `frontend/`: React/TypeScript shell; npm lockfile and container build.
-- `contracts/`: reserved for independent public schemas in WO-2/protocol slices.
-- `fixtures/`: independent provider fixture ownership, implemented in WO-5 onward.
-- `tests/`: configuration checks and actual process/proxy/build smoke verification.
-- `compose.yaml`: local services and PostgreSQL durability.
-
-Next: WO-2 durable evidence/job interfaces and WO-5 independent fixtures; WO-3
-owner policy/secrets; source intake, deterministic runtime, model generation,
-immutable publication, and the build UI. Subsequent milestones add Slack/MCP,
-legacy workflows, and drift repair. `make verify-*` targets will be added alongside
-actual features; unimplemented tests must not be represented as passing.
-
-## Bootstrap walkthrough
-
-Run the setup command, observe that the web health check reaches PostgreSQL
-through the real API, run `make verify-setup`, stop and restart without removing
-the volume. This demonstrates local infrastructure only. The full eight-operation
-and maintenance walkthrough belongs to later work; replay and pending live
-verification must always be labeled explicitly.
+Next: owner policy/secrets (WO-3), bounded source intake (WO-4), deterministic
+REST runtime (WO-6), genuine model-backed generation (WO-7), controlled publication
+(WO-8), and the build UI (WO-9). Later milestones add Slack/MCP, legacy workflows,
+and drift repair. Replay, simulator, and live evidence must stay clearly labeled.
