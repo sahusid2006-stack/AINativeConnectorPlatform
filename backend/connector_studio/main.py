@@ -4,6 +4,10 @@ import os
 from threading import Event, Thread
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from jsonschema import ValidationError as SchemaError
+from pydantic import ValidationError as PolicyError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -63,13 +67,68 @@ def health() -> JSONResponse:
     except SQLAlchemyError:
         # Exceptions can contain connection details; never emit them.
         pass
+    owner_ready = True
+    if ROLE == "api":
+        try:
+            from .provisioning import configured_secret
+            from .policy import ConnectionSecurity
+            configured_secret("OWNER_ACCESS_TOKEN")
+            ConnectionSecurity(app.state.store.engine)._key()
+        except (RuntimeError, AccessError):
+            owner_ready = False
     status = "unavailable" if not database_ready else (
-        "degraded" if ROLE in {"api", "worker"} and workers["worker_process"] != "ready" else "ready")
+        "degraded" if not owner_ready or (ROLE in {"api", "worker"} and workers["worker_process"] != "ready") else "ready")
     return JSONResponse(status_code=200 if status == "ready" else 503, content={
         "service": ROLE, "status": status,
-        "stage": "simulator-fixtures" if ROLE == "fixtures" else "infrastructure-only",
+        "stage": "simulator-fixtures" if ROLE == "fixtures" else "owner-security" if ROLE == "api" else "infrastructure-only",
+        "owner_access": "configured" if owner_ready and ROLE == "api" else "unavailable" if ROLE == "api" else "not_applicable",
         "database": "reachable" if database_ready else "unavailable",
         "workers": workers if ROLE in {"api", "worker"} else {},
         "job_processing": "not_implemented",
-        "product_features": "github_simulator_only" if ROLE == "fixtures" else "not_implemented",
+        "product_features": "github_simulator_only" if ROLE == "fixtures" else "owner_security_only" if ROLE == "api" else "not_implemented",
     })
+
+
+if ROLE == "api":
+    from .access import AccessError, OwnerAccess
+    from .control import COOKIE, ORIGIN, router as control_router
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "api"])
+    app.include_router(control_router)
+
+    @app.middleware("http")
+    async def protect_control(request, call_next):
+        if request.url.path != "/health":
+            if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != ORIGIN:
+                return JSONResponse({"category":"origin_denied"}, status_code=403)
+            try:
+                if not (request.url.path == "/auth/login" and request.method == "POST"):
+                    request.state.principal = OwnerAccess(app.state.store.engine).authenticate(
+                        request.cookies.get(COOKIE), request.headers.get("x-csrf-token"),
+                        write=request.method not in {"GET", "HEAD", "OPTIONS"})
+                if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                    chunks, size = [], 0
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        if size > 2*1024*1024:
+                            return JSONResponse({"category":"request_too_large"}, status_code=413)
+                        chunks.append(chunk)
+                    request._body = b"".join(chunks)
+                response = await call_next(request)
+            except AccessError as error:
+                response = JSONResponse({"category":error.category}, status_code=error.status)
+            except RuntimeError:
+                response = JSONResponse({"category":"secure_configuration_unavailable"}, status_code=503)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        return await call_next(request)
+
+    @app.exception_handler(AccessError)
+    async def access_failure(request, error):
+        return JSONResponse({"category":error.category}, status_code=error.status)
+
+    async def invalid_input(request, error):
+        # Never echo credential-bearing input or exception diagnostics in validation errors.
+        return JSONResponse({"category":"invalid_input"}, status_code=422)
+
+    for error_type in (RequestValidationError, SchemaError, PolicyError):
+        app.add_exception_handler(error_type, invalid_input)

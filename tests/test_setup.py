@@ -13,7 +13,7 @@ class SetupTests(unittest.TestCase):
     def setUpClass(cls):
         env = {**os.environ, "POSTGRES_PASSWORD": "configuration-test-only"}
         result = subprocess.run(
-            ["docker", "compose", "--env-file", "/dev/null", "config", "--format", "json"],
+            ["docker", "compose", "--profile", "tools", "--env-file", "/dev/null", "config", "--format", "json"],
             cwd=ROOT, env=env, capture_output=True, text=True,
         )
         if result.returncode:
@@ -29,7 +29,8 @@ class SetupTests(unittest.TestCase):
 
     def test_all_services_have_healthchecks(self):
         for service in self.config["services"].values():
-            self.assertIn("healthcheck", service)
+            if not service.get("profiles"):
+                self.assertIn("healthcheck", service)
 
     def test_private_network_and_persistent_postgres(self):
         self.assertTrue(self.config["networks"]["private"]["internal"])
@@ -48,6 +49,20 @@ class SetupTests(unittest.TestCase):
             self.assertTrue(service["read_only"])
             self.assertIn("ALL", service["cap_drop"])
             self.assertIn("no-new-privileges:true", service["security_opt"])
+
+    def test_provisioning_is_offline_and_secrets_are_role_scoped(self):
+        provisioning = self.config["services"]["secret-init"]
+        self.assertEqual(provisioning["profiles"], ["tools"])
+        self.assertEqual(provisioning["network_mode"], "none")
+        self.assertFalse(provisioning.get("ports"))
+        fixture = self.config["services"]["fixtures"]
+        self.assertNotIn("ANTHROPIC_API_KEY", fixture["environment"])
+        self.assertFalse(fixture.get("volumes"))
+        worker = self.config["services"]["worker"]
+        self.assertNotIn("OWNER_ACCESS_TOKEN", worker["environment"])
+        self.assertEqual(len(worker["volumes"]), 1)
+        self.assertTrue(worker["volumes"][0]["read_only"])
+        self.assertEqual(worker["volumes"][0]["target"], "/run/vault")
 
     def test_missing_database_password_fails_closed(self):
         env = {key: value for key, value in os.environ.items() if key != "POSTGRES_PASSWORD"}

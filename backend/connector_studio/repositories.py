@@ -9,16 +9,7 @@ from sqlalchemy import select, update, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from . import models as m
 
-SENSITIVE = {"password", "token", "api_key", "authorization", "secret", "access_token", "credential_value"}
-
-
-def redacted(value):
-    if isinstance(value, dict):
-        return {k: "[REDACTED]" if k.lower() in SENSITIVE else redacted(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [redacted(v) for v in value]
-    return value
-
+from .redaction import redacted
 
 @dataclass(frozen=True)
 class Claim:

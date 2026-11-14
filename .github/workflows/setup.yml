@@ -15,6 +15,9 @@ jobs:
           echo "POSTGRES_PASSWORD=$password" >> "$GITHUB_ENV"
       - run: make dev
       - run: make verify-restart
+      - run: make verify-auth
+      - run: make verify-connections
+      - run: make verify-policy
       - run: make verify-durability
       - run: make verify-fixtures
       - run: make verify-security
