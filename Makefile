@@ -2,6 +2,7 @@
 
 dev: provision
 	docker compose up --build --wait --wait-timeout 180
+	docker build --target evaluator -t connector-studio-evaluator -f backend/Dockerfile .
 
 stop:
 	docker compose down
@@ -55,3 +56,8 @@ verify-policy:
 .PHONY: verify-source-intake
 verify-source-intake:
 	docker compose exec -T api python -m unittest discover -s tests -p test_sources.py -v
+
+.PHONY: verify-runtime
+verify-runtime:
+	docker compose exec -T api python -m unittest discover -s tests -p test_runtime.py -v
+	python3 tests/smoke_runtime.py

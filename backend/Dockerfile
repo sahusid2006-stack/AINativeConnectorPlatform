@@ -19,3 +19,6 @@ COPY tools/requirements.txt /opt/audit-requirements.txt
 RUN pip install --no-cache-dir --require-hashes -r /opt/audit-requirements.txt && pip check
 COPY fixtures /opt/acceptance
 USER 10001
+
+FROM runtime AS evaluator
+CMD ["python", "-m", "connector_studio.mapping_eval"]

@@ -96,6 +96,8 @@ if ROLE == "api":
     app.include_router(control_router)
     from .source_control import router as source_router
     app.include_router(source_router)
+    from .runtime_control import router as runtime_router
+    app.include_router(runtime_router)
 
     @app.middleware("http")
     async def protect_control(request, call_next):
