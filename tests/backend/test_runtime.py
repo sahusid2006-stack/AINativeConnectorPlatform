@@ -1,8 +1,9 @@
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -116,12 +117,65 @@ class RuntimeTests(SecurityBase):
         approval=self.security.approve(self.connection_id,self.version,op,args)
         ProviderFake.responses=[ProviderError('timeout')]
         result=self.call(op,args,approval);self.assertEqual(result['status'],'outcome_unknown');self.assertEqual(result['attempts'],1)
-        self.assertEqual(self.call(op,args,approval)['status'],'approval_required');self.assertEqual(ProviderFake.calls,1)
+        blocked=self.call(op,args,approval);self.assertEqual(blocked['status'],'failed');self.assertEqual(blocked['error']['category'],'outcome_unknown');self.assertEqual(ProviderFake.calls,1)
+        replacement=self.security.approve(self.connection_id,self.version,op,args)
+        self.assertEqual(self.call(op,args,replacement)['error']['detail'],'write_reconciliation_required');self.assertEqual(ProviderFake.calls,1)
         with self.engine.connect() as conn: self.assertTrue(conn.scalar(select(m.jobs.c.write_intent).where(m.jobs.c.status=='outcome_unknown')))
+
+    def test_interrupted_write_recovers_invocation_and_blocks_fresh_approval(self):
+        from connector_studio.policy import arguments_digest
+        op='github_create_issue_v1';args={'owner':'demo','repo':'connector-fixture','title':'crashed write'}
+        trace,job,token=uuid.uuid4(),uuid.uuid4(),uuid.uuid4()
+        with self.engine.begin() as conn:
+            now=self.store.now(conn)
+            conn.execute(m.invocations.insert().values(id=trace,version_id=self.version,trace_id=trace,status='running',metadata={'connection_id':str(self.connection_id),'operation':op,'arguments_digest':arguments_digest(args),'verification_mode':'simulator'}))
+            conn.execute(m.jobs.insert().values(id=job,kind='write',status='running',payload={'invocation_id':str(trace)},deadline=now+timedelta(seconds=30),lease_owner='crashed',lease_token=token,lease_until=now-timedelta(seconds=1),attempt_count=1,write_intent=True))
+            conn.execute(m.attempts.insert().values(job_id=job,attempt_number=1,lease_token=token,status='running'))
+        approval=self.security.approve(self.connection_id,self.version,op,args)
+        result=self.call(op,args,approval)
+        self.assertEqual(result['error']['detail'],'write_reconciliation_required');self.assertEqual(ProviderFake.calls,0)
+        with self.engine.connect() as conn:
+            row=conn.execute(select(m.invocations).where(m.invocations.c.id==trace)).mappings().one()
+            self.assertEqual(row['status'],'outcome_unknown');self.assertEqual(row['metadata']['result']['version_id'],str(self.version))
+            self.assertEqual(row['metadata']['connection_id'],str(self.connection_id))
+
+    def test_mapping_requests_cannot_substitute_approved_public_arguments(self):
+        with self.engine.connect() as conn:
+            connector=conn.scalar(select(m.versions.c.connector_id).where(m.versions.c.id==self.version))
+        for index,key,value,operation,args in (
+            (1,'path_template','/repos/demo/connector-fixture/issues/2','github_get_issue_v1',ARGS),
+            (0,'query',{'page':2,'per_page':2},'github_list_issues_v1',{'owner':'demo','repo':'connector-fixture','page':1,'per_page':2}),
+            (2,'json',{'title':'substituted title','body':None},'github_create_issue_v1',{'owner':'demo','repo':'connector-fixture','title':'approved title'})):
+            package=deepcopy(self.package);package['mappings'][index]['request'][key]=value
+            version=self.store.candidate(connector,package,package['source_snapshot_ids'],revision=index+2)
+            with self.engine.begin() as conn: conn.execute(update(m.versions).where(m.versions.c.id==version).values(status='published',published_by='test',published_at=self.store.now(conn)))
+            result=self.runtime.invoke(self.connection_id,version,operation,args)
+            self.assertEqual(result['status'],'failed');self.assertEqual(result['attempts'],0)
+        self.assertEqual(ProviderFake.calls,0)
+
+    def test_mapping_broker_fences_completion_and_expires_tasks(self):
+        from connector_studio.mapping_broker import claim, finish
+        task=uuid.uuid4()
+        with self.engine.begin() as conn:
+            now=self.store.now(conn)
+            conn.execute(m.mapping_tasks.insert().values(id=task,payload={},deadline=now+timedelta(seconds=20)))
+        leased=claim(self.engine);self.assertEqual(leased['id'],str(task))
+        completion={'id':str(task),'lease_token':str(uuid.uuid4()),'status':'completed','result':{'ok':True}}
+        finish(self.engine,completion)
+        with self.engine.connect() as conn: self.assertEqual(conn.scalar(select(m.mapping_tasks.c.status).where(m.mapping_tasks.c.id==task)),'running')
+        completion['lease_token']=leased['lease_token'];finish(self.engine,completion)
+        completion['result']={'ok':False};finish(self.engine,completion)
+        with self.engine.connect() as conn: self.assertEqual(conn.scalar(select(m.mapping_tasks.c.result).where(m.mapping_tasks.c.id==task)),{'ok':True})
+        expired=uuid.uuid4()
+        with self.engine.begin() as conn: conn.execute(m.mapping_tasks.insert().values(id=expired,payload={},deadline=self.store.now(conn)-timedelta(seconds=1)))
+        self.assertIsNone(claim(self.engine))
+        with self.engine.connect() as conn: self.assertEqual(conn.scalar(select(m.mapping_tasks.c.result).where(m.mapping_tasks.c.id==expired)),{'category':'timeout'})
 
     def test_output_schema_failure_and_frozen_public_schemas(self):
         ProviderFake.responses=[{'number':1}]
         self.assertEqual(self.call()['status'],'failed')
+        ProviderFake.responses=[{**ISSUE,'state':'unknown'}]
+        self.assertEqual(self.call()['error']['detail'],'output_schema_mismatch')
         source=self.store.snapshot('fixture://tampered','text/plain',b'Synthetic test contract');connector=self.store.connector('Tampered')
         package=test_package(source);package['manifest']['operations'][1]['input_schema']={'type':'object'}
         version=self.store.candidate(connector,package,[source]);connection=self.security.create(connector,POLICY,'simulator-github-token')

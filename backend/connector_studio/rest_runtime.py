@@ -6,7 +6,6 @@ import hashlib
 import http.client
 import ipaddress
 import json
-from pathlib import Path
 import random
 import re
 import socket
@@ -15,11 +14,12 @@ import time
 import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from jsonschema import ValidationError
+from jsonschema import ValidationError, Draft202012Validator, FormatChecker
+from referencing import Registry
 from sqlalchemy import select, update
 from . import models as m
 from .access import AccessError
-from .contracts import CONTRACTS, offline_validator, validate_contract
+from .contracts import CONTRACTS, validate_contract
 from .mapping_broker import MappingBroker
 from .mapping_eval import bounded
 from .policy import ConnectionSecurity, arguments_digest
@@ -36,6 +36,10 @@ CAPABILITIES={'github_list_issues_v1':('ListInput','ListOutput','read','GET'),
 
 def public_schema(name):
     return {'$schema':GITHUB['$schema'],'$defs':deepcopy(GITHUB['$defs']),'$ref':'#/$defs/'+name}
+
+
+def public_validator(name):
+    return Draft202012Validator(public_schema(name),registry=Registry(),format_checker=FormatChecker())
 
 
 class ProviderError(Exception):
@@ -164,10 +168,13 @@ class Runtime:
         if not version or not connection: raise AccessError('version_or_connection_not_found',404)
         if version['connector_id']!=connection['connector_id'] or version['public_major']!=public_major or version['status']!='published' and not (candidate_test and version['status']=='candidate' and connection['mode']=='simulator'):
             raise AccessError('version_or_operation_denied',403)
+        self.store.recover()
         trace=uuid.uuid4();attempts=0;claim=None;dispatched=False
+        metadata={'operation':operation,'connection_id':str(connection_id),'verification_mode':'simulator','candidate_test':candidate_test}
+        stage='input'
         result={'trace_id':str(trace),'version_id':str(version_id),'status':'failed','attempts':0}
         with self.engine.begin() as conn:
-            conn.execute(m.invocations.insert().values(id=trace,version_id=version_id,trace_id=trace,status='running',metadata={'operation':operation,'verification_mode':'simulator','candidate_test':candidate_test}))
+            conn.execute(m.invocations.insert().values(id=trace,version_id=version_id,trace_id=trace,status='running',metadata=metadata))
             self.store.audit(conn,'owner','invocation.started',trace,{'version_id':str(version_id)})
         try:
             package=bounded(json.loads(version['artifact']))
@@ -177,14 +184,22 @@ class Runtime:
             if operation not in CAPABILITIES or len(contracts)!=1 or len(mappings)!=1: raise AccessError('unsupported_capability',422)
             contract,mapping=contracts[0],mappings[0];input_name,output_name,classification,_=CAPABILITIES[operation]
             if contract['input_schema']!=public_schema(input_name) or contract['output_schema']!=public_schema(output_name) or contract['classification']!=classification or contract['protocol_mapping']!='rest' or mapping['driver']!='rest': raise AccessError('unsupported_capability',422)
-            arguments_digest(arguments)
-            offline_validator(public_schema(input_name)).validate(arguments)
+            metadata['arguments_digest']=arguments_digest(arguments)
+            with self.engine.begin() as conn:
+                conn.execute(update(m.invocations).where(m.invocations.c.id==trace).values(metadata=metadata))
+                if classification=='write' and conn.scalar(select(m.invocations.c.id).where(m.invocations.c.status=='outcome_unknown',m.invocations.c.metadata['connection_id'].astext==str(connection_id),m.invocations.c.metadata['operation'].astext==operation,m.invocations.c.metadata['arguments_digest'].astext==metadata['arguments_digest']).limit(1)):
+                    raise AccessError('write_reconciliation_required',409)
+            public_validator(input_name).validate(arguments)
             args=deepcopy(arguments)
             for key,schema in GITHUB['$defs'][input_name]['properties'].items():
                 if key not in args and 'default' in schema: args[key]=schema['default']
             deadline=time.monotonic()+min(30,contract['timeout_seconds'])
             request=self.evaluator.evaluate({'mode':'request','mapping':mapping,'input':args},deadline)
             driver=self.driver_factory(request,operation,connection['resource_policy'],scenario)
+            actual=urlsplit(request['url']);segments=actual.path.split('/')
+            if segments[2]!=args['owner'] or segments[3]!=args['repo'] or operation=='github_get_issue_v1' and segments[-1]!=str(args['issue_number']): raise AccessError('resource_denied',403)
+            if classification=='write' and request['json']!={'title':args['title'],'body':args.get('body')}: raise AccessError('validation',422)
+            if operation=='github_list_issues_v1' and parse_qs(actual.query)!={key:[str(args[key])] for key in ('page','per_page')}: raise AccessError('validation',422)
             permit=self.security.permit(connection_id,version_id,operation,arguments,driver.resources,approval_id,_candidate_test=candidate_test)
             pinned=driver.guard(deadline)
             credential=self.security.resolve(permit)
@@ -209,18 +224,20 @@ class Runtime:
                     self.sleep(delay)
                     pinned=driver.guard(deadline)
                     credential=self.security.resolve(permit)
+            stage='output'
             output=self.evaluator.evaluate({'mode':'output','mapping':mapping,'input':args,'native':native,'next_page':next_page},deadline)
-            offline_validator(public_schema(output_name)).validate(output)
+            public_validator(output_name).validate(output)
             result.update(status='succeeded',output=redacted(output))
             if claim: self.store.finish(claim,'completed',{'invocation_id':str(trace),'status':'completed'})
         except (ValidationError,ValueError,TypeError):
-            result['error']={'category':'outcome_unknown' if claim and dispatched else 'validation'}
+            result['error']={'category':'outcome_unknown' if claim and dispatched else 'upstream' if stage=='output' else 'validation','detail':'output_schema_mismatch' if stage=='output' else 'invalid_input_or_mapping'}
         except AccessError as error:
             result['status']='approval_required' if error.category=='approval_required' else 'failed'
-            category='permission' if error.category in {'resource_denied','connection_changed','version_or_operation_denied'} else 'authentication' if error.category=='reconnection_required' else 'timeout' if error.category=='timeout' else 'unsupported_capability'
-            result['error']={'category':category}
+            category='outcome_unknown' if error.category=='write_reconciliation_required' else 'validation' if error.category=='validation' else 'permission' if error.category in {'resource_denied','connection_changed','version_or_operation_denied'} else 'authentication' if error.category=='reconnection_required' else 'timeout' if error.category=='timeout' else 'unsupported_capability'
+            result['error']={'category':category,'detail':error.category}
+            if error.category=='write_reconciliation_required': result['error']['reconciliation_required']=True
         except ProviderError as error:
-            result['error']={'category':error.category}
+            result['error']={'category':error.category,'rewrite_adapter':False}
         except Exception:
             result['error']={'category':'upstream'}
         if claim and result['status']!='succeeded':
@@ -230,6 +247,6 @@ class Runtime:
         result['attempts']=attempts
         validate_contract('InvocationResult',result)
         with self.engine.begin() as conn:
-            conn.execute(update(m.invocations).where(m.invocations.c.id==trace).values(status='completed' if result['status']=='succeeded' else result['status'],metadata=redacted({'operation':operation,'verification_mode':'simulator','candidate_test':candidate_test,'result':result})))
+            conn.execute(update(m.invocations).where(m.invocations.c.id==trace).values(status='completed' if result['status']=='succeeded' else result['status'],metadata=redacted({**metadata,'result':result})))
             self.store.audit(conn,'owner','invocation.finished',trace,{'status':result['status'],'attempts':attempts})
         return result

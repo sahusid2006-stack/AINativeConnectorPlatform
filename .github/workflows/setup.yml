@@ -19,6 +19,7 @@ jobs:
       - run: make verify-connections
       - run: make verify-policy
       - run: make verify-source-intake
+      - run: make verify-runtime
       - run: make verify-durability
       - run: make verify-fixtures
       - run: make verify-security

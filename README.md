@@ -2,7 +2,7 @@
 
 AI Native Connector Platform — simulator-first, evidence-driven connector generation
 and maintenance. Current slices implement WO-1 setup, WO-2 durable foundations,
-WO-5 independent GitHub fixtures/verification scaffolding, WO-3 owner security, and WO-4 bounded source intake.
+WO-5 independent GitHub fixtures/verification scaffolding, WO-3 owner security, and WO-4 bounded source intake, and WO-6 deterministic REST runtime.
 
 ## Implemented
 
@@ -24,8 +24,7 @@ WO-5 independent GitHub fixtures/verification scaffolding, WO-3 owner security, 
 - Fixed public schemas/acceptance cases and a credential-free, network-isolated
   boundary probe harness. Hash-locked dependency scanning fails closed.
 
-**Not implemented:** owner-login UI, executable
-connector mappings, model generation, actual job orchestration, publication API,
+**Not implemented:** owner-login UI, model generation, build job orchestration, publication API,
 MCP, workflows, or drift repair. Database job primitives are not a working build
 pipeline. Fixture tests do not establish generated-adapter acceptance. No live
 provider is invoked and no generated Python is executed.
@@ -203,3 +202,41 @@ Next: deterministic
 REST runtime (WO-6), genuine model-backed generation (WO-7), controlled publication
 (WO-8), and the build UI (WO-9). Later milestones add Slack/MCP, legacy workflows,
 and drift repair. Replay, simulator, and live evidence must stay clearly labeled.
+
+
+## Deterministic REST runtime (WO-6)
+
+Owner-authenticated `POST /invocations` takes `connection_id`, exact `version_id`,
+`operation`, `public_major`, `arguments`, and optional `approval_id`.
+`GET /invocations/{trace_id}` returns retained exact-version evidence. The active
+selector deliberately returns `501 active_registry_pending` until WO-8. Ordinary
+routes cannot select candidates, fixture scenarios, images, mounts or launch flags.
+
+The M1 profile supports simulator GitHub list/get/create. It validates frozen
+public contracts and the binding between public arguments and native repository,
+issue, pagination, and write body before provider contact. Trusted drivers alone
+resolve credentials, validate/pin destinations, inject Bearer authentication, and
+contact the provider. Redirects are rejected, never followed with credentials.
+Safe reads use at most three attempts within a shared 30-second deadline;
+writes never auto-retry. Every write needs exact single-use approval and retained
+pre-dispatch intent. Interrupted/ambiguous writes remain `outcome_unknown`;
+even fresh approvals cannot repeat the same connection/operation/argument digest
+until reconciliation. Blocked retry attempts themselves have status `failed` and
+an `outcome_unknown` error; they do not claim a second provider effect occurred.
+Reconciliation management is not yet exposed; unknown writes remain blocked.
+
+Mapping evaluation is data-only, through PostgreSQL leases and a **host-only fixed
+supervisor**, not in the API interpreter. `make dev` builds the evaluator image;
+run `python3 tools/runtime_supervisor.py` in a separate foreground terminal when
+using plain Compose. Software Factory starts this persistent terminal automatically.
+No Docker socket is mounted into application or evaluation containers. Evaluators
+have no network, credentials or mounts, run non-root/read-only, and have fixed
+CPU/memory/PID/deadline constraints. `/health` separately reports
+`mapping_evaluation` readiness; process health does not imply a build scheduler.
+The five-slot actual invocation probe is `make verify-runtime`.
+
+These probes use explicitly **handcrafted test mappings**, not model-generated
+connectors or publication acceptance. Model-backed generation, publication gates,
+UI flows, other protocol drivers and full lifecycle/performance acceptance remain
+pending. Invocation overhead targets have not been measured or claimed satisfied.
+See [the frozen mapping grammar](contracts/mapping-language.md).

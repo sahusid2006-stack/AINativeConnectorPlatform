@@ -3,6 +3,13 @@
   "install": "npm --prefix frontend ci",
   "start": "make dev",
   "terminals": [
-    { "name": "connector-studio", "command": "docker compose logs --follow --tail 50" }
+    {
+      "name": "connector-studio",
+      "command": "docker compose logs --follow --tail 50"
+    },
+    {
+      "name": "mapping-supervisor",
+      "command": "python3 tools/runtime_supervisor.py"
+    }
   ]
 }

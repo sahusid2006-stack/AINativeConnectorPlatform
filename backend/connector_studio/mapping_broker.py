@@ -26,7 +26,7 @@ class MappingBroker:
             with self.engine.connect() as conn:
                 row=conn.execute(select(m.mapping_tasks).where(m.mapping_tasks.c.id==task)).mappings().one()
             if row['status']=='completed': return bounded(row['result'])
-            if row['status']=='failed': raise AccessError('unsupported_capability',422)
+            if row['status']=='failed': raise AccessError('timeout' if isinstance(row['result'],dict) and row['result'].get('category')=='timeout' else 'unsupported_capability',422)
             time.sleep(.03)
         raise AccessError('timeout',504)
 
@@ -66,6 +66,7 @@ def main():
     try:
         if action=='claim':
             EvidenceStore(engine).heartbeat('mapping_supervisor')
+            EvidenceStore(engine).recover()
             print(json.dumps(claim(engine)))
         elif action=='finish': finish(engine,json.loads(sys.stdin.buffer.read(2*1024*1024+1)))
         else: raise SystemExit('Unsupported supervisor action')

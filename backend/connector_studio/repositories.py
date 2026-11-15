@@ -156,6 +156,14 @@ class EvidenceStore:
                     lease_owner=None, lease_token=None, lease_until=None))
                 conn.execute(update(m.attempts).where(m.attempts.c.lease_token == row["lease_token"]).values(
                     status="outcome_unknown" if row["write_intent"] else "interrupted", finished_at=now))
+                if status == "outcome_unknown" and row["payload"].get("invocation_id"):
+                    try: invocation_id=uuid.UUID(row["payload"]["invocation_id"])
+                    except (ValueError,TypeError,AttributeError): invocation_id=None
+                    if invocation_id:
+                        invocation=conn.execute(select(m.invocations).where(m.invocations.c.id==invocation_id,m.invocations.c.status=="running").with_for_update()).mappings().first()
+                        if invocation:
+                            metadata={**invocation["metadata"],"result":{"trace_id":str(invocation_id),"version_id":str(invocation["version_id"]),"status":"outcome_unknown","attempts":1,"error":{"category":"outcome_unknown","reconciliation_required":True}}}
+                            conn.execute(update(m.invocations).where(m.invocations.c.id==invocation_id).values(status="outcome_unknown",metadata=metadata))
                 self.audit(conn, "recovery", "job.recovered", row["id"], {"status": status})
                 recovered.append(row["id"])
             # Expired queued jobs must terminate, not remain apparently runnable forever.

@@ -57,11 +57,14 @@ if ROLE == "fixtures":
 def health() -> JSONResponse:
     """Report process availability, explicitly not build/scheduler progress."""
     database_ready = False
+    mapping_health = "not_applicable"
     workers = {"worker_process": "degraded", "scheduler": "not_implemented"}
     try:
         with app.state.store.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         database_ready = True
+        if ROLE == "api":
+            mapping_health = app.state.store.worker_health(["mapping_supervisor"], stale_seconds=15)["mapping_supervisor"]
         if ROLE in {"api", "worker"}:
             workers.update(app.state.store.worker_health(["worker_process"], stale_seconds=10))
     except SQLAlchemyError:
@@ -80,12 +83,13 @@ def health() -> JSONResponse:
         "degraded" if not owner_ready or (ROLE in {"api", "worker"} and workers["worker_process"] != "ready") else "ready")
     return JSONResponse(status_code=200 if status == "ready" else 503, content={
         "service": ROLE, "status": status,
-        "stage": "simulator-fixtures" if ROLE == "fixtures" else "source-intake" if ROLE == "api" else "infrastructure-only",
+        "stage": "simulator-fixtures" if ROLE == "fixtures" else "deterministic-rest-runtime" if ROLE == "api" else "infrastructure-only",
         "owner_access": "configured" if owner_ready and ROLE == "api" else "unavailable" if ROLE == "api" else "not_applicable",
         "database": "reachable" if database_ready else "unavailable",
         "workers": workers if ROLE in {"api", "worker"} else {},
         "job_processing": "not_implemented",
-        "product_features": "github_simulator_only" if ROLE == "fixtures" else "owner_security_and_source_intake" if ROLE == "api" else "not_implemented",
+        "mapping_evaluation": mapping_health,
+        "product_features": "github_simulator_only" if ROLE == "fixtures" else "owner_security_source_intake_and_rest_runtime" if ROLE == "api" else "not_implemented",
     })
 
 
