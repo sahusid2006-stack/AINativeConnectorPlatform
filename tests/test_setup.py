@@ -77,6 +77,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(config["start"], "make dev")
         self.assertNotIn("POSTGRES_PASSWORD", json.dumps(config))
         self.assertTrue(config["terminals"])
+        self.assertIn("python3 tools/runtime_supervisor.py", [terminal["command"] for terminal in config["terminals"]])
 
     def test_secret_examples_are_empty(self):
         for line in (ROOT / ".env.example").read_text().splitlines():

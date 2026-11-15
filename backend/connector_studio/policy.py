@@ -166,10 +166,10 @@ class ConnectionSecurity:
             conn.execute(update(m.approvals).where(m.approvals.c.connection_id == connection_id, m.approvals.c.revoked_at.is_(None)).values(revoked_at=self.store.now(conn)))
             self.store.audit(conn, actor, "connection.revoked" if revoke else "connection.changed", connection_id)
 
-    def _operation(self, conn, connection, version_id, operation, arguments):
+    def _operation(self, conn, connection, version_id, operation, arguments, _candidate_test=False):
         version = conn.execute(select(m.versions).where(m.versions.c.id == version_id)).mappings().first()
         contract = conn.scalar(select(m.operations.c.contract).where(m.operations.c.version_id == version_id, m.operations.c.name == operation))
-        if not version or version["connector_id"] != connection["connector_id"] or version["status"] != "published" or not contract:
+        if not version or version["connector_id"] != connection["connector_id"] or (version["status"] != "published" and not (_candidate_test and version["status"] == "candidate" and connection["mode"] == "simulator")) or not contract:
             raise AccessError("version_or_operation_denied")
         arguments_digest(arguments)
         try:
@@ -180,12 +180,12 @@ class ConnectionSecurity:
             raise AccessError("invalid_contract", 422) from None
         return contract
 
-    def approve(self, connection_id, version_id, operation, arguments, expires_seconds=600, actor="owner"):
+    def approve(self, connection_id, version_id, operation, arguments, expires_seconds=600, actor="owner", *, _candidate_test=False):
         if not 1 <= expires_seconds <= 600:
             raise AccessError("invalid_approval_expiry", 422)
         with self.engine.begin() as conn:
             connection = self._connection(conn, connection_id)
-            contract = self._operation(conn, connection, version_id, operation, arguments)
+            contract = self._operation(conn, connection, version_id, operation, arguments, _candidate_test)
             if contract["classification"] != "write":
                 raise AccessError("approval_only_for_writes", 422)
             approval_id = conn.scalar(m.approvals.insert().values(connection_id=connection_id, version_id=version_id,
@@ -202,11 +202,11 @@ class ConnectionSecurity:
                 raise AccessError("approval_not_found_or_revoked", 404)
             self.store.audit(conn, actor, "approval.revoked", approval_id)
 
-    def permit(self, connection_id, version_id, operation, arguments, resources, approval_id=None):
+    def permit(self, connection_id, version_id, operation, arguments, resources, approval_id=None, *, _candidate_test=False):
         with self.engine.begin() as conn:
             connection = self._connection(conn, connection_id)
             check_resources(connection["resource_policy"], resources)
-            contract = self._operation(conn, connection, version_id, operation, arguments)
+            contract = self._operation(conn, connection, version_id, operation, arguments, _candidate_test)
             write = contract["classification"] == "write"
             if write:
                 consumed = conn.execute(update(m.approvals).where(m.approvals.c.id == approval_id,

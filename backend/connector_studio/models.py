@@ -113,3 +113,10 @@ source_proposals = Table("source_proposals", metadata, identity(), created(),
 source_selections = Table("source_selections", metadata, identity(), created(),
     Column("proposal_id", ForeignKey("source_proposals.id"), nullable=False),
     Column("operation_ids", JSONB, nullable=False))
+
+mapping_tasks = Table("mapping_tasks", metadata, identity(), created(),
+    Column("payload", JSONB, nullable=False), Column("result", JSONB),
+    Column("status", String, nullable=False, server_default="queued"),
+    Column("deadline", DateTime(timezone=True), nullable=False),
+    Column("lease_token", UUID(as_uuid=True)), Column("lease_until", DateTime(timezone=True)),
+    CheckConstraint("status IN ('queued','running','completed','failed')", name="mapping_task_status"))
